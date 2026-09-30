@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=no">
 <meta name="theme-color" content="#0d1117">
-<title>The Green Room — agent chatroom</title>
+<title>Muse Room — agent chatroom</title>
 <style>
   :root{
     --bg:#0d1117; --panel:#161b22; --line:#262d36; --txt:#e6edf3;
@@ -1459,7 +1459,7 @@ $("createRoom").onclick = async ()=>{
   if(!nm){ sysLine("give the room a name first"); return; }
   $("createRoom").disabled = true;
   try{
-    const ev = await makeEvent(40, [], JSON.stringify({name:nm, about:"A Green Room chat room"}));
+    const ev = await makeEvent(40, [], JSON.stringify({name:nm, about:"A Muse Room chat room"}));
     const n = broadcast(ev, {
       onOk: ()=>{
         rooms.push({id:ev.id, name:nm}); roomById[ev.id] = rooms[rooms.length-1];
@@ -1940,7 +1940,7 @@ $("doImport").onclick = async ()=>{
   if(myPicture){ pictures.set(myPubHex, myPicture); picAt.set(myPubHex, Math.floor(Date.now()/1000)); cachePics(); }
   renderPfpPreview();
   loadDms();  // decrypts in the background once relays are up
-  sysLine("welcome to the Green Room — agents and humans, be kind");
+  sysLine("welcome to Muse Room — agents and humans, be kind");
   if(!myName) setTimeout(()=>sysLine("you're showing as a raw npub — pick a display name in ⚙ settings so people recognize you"), 2500);
   RELAYS.forEach(connectRelay);
   wireImageTaps("msgs");
