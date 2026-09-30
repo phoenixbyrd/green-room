@@ -42,6 +42,8 @@
   .meta{display:flex; align-items:center; gap:8px; margin-bottom:4px;}
   .avatar{width:22px; height:22px; border-radius:50%; flex-shrink:0;}
   .who{font-size:13px; font-weight:600;}
+  .msg.failed{opacity:.7; border:1px dashed #a33;}
+  .msg.failed .who::after{content:" ⚠ not sent — tap to retry"; color:#e88; font-size:11px; font-weight:400;}
   .when{font-size:11px; color:var(--dim); margin-left:auto; flex-shrink:0;}
   .body{font-size:15px; line-height:1.45; white-space:pre-wrap;}
   .body a{color:var(--acc);}
@@ -126,6 +128,17 @@
       <button class="btn primary" id="saveName">Save name</button>
       <button class="btn danger" id="newIdent">New identity</button>
     </div>
+    <label>Secret key (nsec) — like a password. Anyone holding it <i>is</i> you. Never share it.</label>
+    <div class="mono" id="nsecline">••••••••••••</div>
+    <div class="row">
+      <button class="btn" id="showNsec">Show</button>
+      <button class="btn" id="copyNsec">Copy</button>
+    </div>
+    <label for="importNsec">Move an identity here (paste its nsec)</label>
+    <input type="text" id="importNsec" placeholder="nsec1…" autocomplete="off" autocapitalize="off">
+    <div class="row">
+      <button class="btn" id="doImport">Import identity</button>
+    </div>
     <button class="btn" id="closeSheet">Close</button>
   </div>
 </div>
@@ -173,8 +186,22 @@ function convertbits(data,from,to,pad){ let acc=0,bits=0; const r=[],mx=(1<<to)-
 function bech32(hrp,data){ const c=[...data,0,0,0,0,0,0];
   const pm=polymod([...hrpExpand(hrp),...c])^1;
   const cs=[]; for(let i=0;i<6;i++) cs.push((pm>>(5*(5-i)))&31);
-  return hrp+"1"+[...c,...cs].map(d=>CHARSET[d]).join(""); }
+  return hrp+"1"+[...data,...cs].map(d=>CHARSET[d]).join(""); }
+function bech32Decode(s){ // returns {hrp, data:Uint8Array} or null
+  s=s.trim().toLowerCase();
+  const p=s.lastIndexOf("1");
+  if(p<1||p+7>s.length) return null;
+  const hrp=s.slice(0,p), tail=s.slice(p+1);
+  const d=[]; for(const ch of tail){ const v=CHARSET.indexOf(ch); if(v<0) return null; d.push(v); }
+  if(polymod([...hrpExpand(hrp),...d])!==1) return null;
+  const payload=d.slice(0,-6);
+  // 5->8 bit
+  let acc=0,bits=0; const out=[];
+  for(const v of payload){ acc=(acc<<5)|v; bits+=5; while(bits>=8){ bits-=8; out.push((acc>>bits)&255); } }
+  return {hrp, data:new Uint8Array(out)};
+}
 const npubOf = pubHex => bech32("npub", convertbits(unhex(pubHex),8,5,true));
+const nsecOf = privHex => bech32("nsec", convertbits(unhex(privHex),8,5,true));
 function colorOf(pubHex){ let h=0; for(let i=0;i<12;i++) h=(h*31+parseInt(pubHex.slice(i*2,i*2+2),16))>>>0;
   return `hsl(${h%360} 55% 55%)`; }
 
@@ -195,9 +222,10 @@ async function initIdentity(){
   $("relayline").textContent = RELAYS.join("\n");
 }
 async function publishProfile(){
+  if(openCount === 0){ profileQueued = true; return; }  // flushed on first connect
   const content = JSON.stringify({name: myName || "guest"});
   const ev = await makeEvent(0, [], content);
-  broadcast(ev);
+  if(broadcast(ev) > 0) profileSent = true;
 }
 
 /* ---------- nostr events ---------- */
@@ -211,7 +239,10 @@ async function makeEvent(kind, tags, content){
 /* ---------- relay pool ---------- */
 const seen = new Map();          // event id -> event
 const names = new Map();         // pubkey -> display name (from kind 0)
+const nameAt = new Map();        // pubkey -> created_at of name
+const authors = new Set();       // pubkeys seen in the room
 let openCount = 0, wantSub = true;
+let profileQueued = false, profileSent = false;
 const sockets = [];
 
 function setStatus(){
@@ -225,31 +256,57 @@ function setStatus(){
 function connectRelay(url){
   let ws;
   try { ws = new WebSocket(url); } catch(e){ schedule(url); return; }
-  const sub = "gr" + Math.random().toString(16).slice(2,10);
-  const rec = {url, ws, sub};
+  const sub42 = "gr42" + Math.random().toString(16).slice(2,10);
+  const sub0  = "gr0"  + Math.random().toString(16).slice(2,10);
+  const rec = {url, ws, sub42, sub0};
   ws.onopen = () => {
     openCount++; setStatus();
-    ws.send(JSON.stringify(["REQ", sub, {kinds:[0,42], "#e":[CHANNEL_ID], "limit":60}]));
+    ws.send(JSON.stringify(["REQ", sub42, {kinds:[42], "#e":[CHANNEL_ID], "limit":100}]));
+    refreshProfileSub(rec);
+    // flush a profile publish that was queued before any relay connected
+    if(profileQueued && myName && !profileSent){ profileQueued=false; publishProfile(); }
   };
   ws.onmessage = (m) => {
     let msg; try{ msg = JSON.parse(m.data); }catch(e){ return; }
-    if(msg[0]==="EVENT" && msg[1]===sub) onEvent(msg[2]);
-    // EOSE ignored: subscription stays open for live events
+    if(msg[0]==="OK" && pending.has(msg[1])){ onAck(msg[1], msg[2], msg[3]); return; }
+    if(msg[0]==="EVENT" && (msg[1]===sub42 || msg[1]===sub0)) onEvent(msg[2], rec);
+    // EOSE ignored: subscriptions stay open for live events
   };
-  const down = () => { openCount=Math.max(0,openCount-1); setStatus(); if(wantSub) schedule(url); };
+  const down = () => {
+    if(rec.dead) return; rec.dead = true;   // onclose+onerror both fire — count once
+    const i = sockets.indexOf(rec); if(i>=0) sockets.splice(i,1);
+    openCount=Math.max(0,openCount-1); setStatus(); if(wantSub) schedule(url);
+  };
   ws.onclose = down; ws.onerror = down;
   sockets.push(rec);
 }
+// kind-0 profile events carry no room tag, so they need their own
+// subscription filtered by author — not the room-tagged one.
+function refreshProfileSub(rec){
+  if(rec.ws.readyState !== 1 || authors.size === 0) return;
+  try{ rec.ws.send(JSON.stringify(["CLOSE", rec.sub0])); }catch(e){}
+  rec.ws.send(JSON.stringify(["REQ", rec.sub0, {kinds:[0], authors:[...authors], limit:authors.size*3}]));
+}
 function schedule(url){ setTimeout(()=>{ if(wantSub) connectRelay(url); }, 5000); }
 
-function onEvent(ev){
+function onEvent(ev, rec){
   if(!ev || !ev.id) return;
   if(ev.kind === 0){
-    try{ const p = JSON.parse(ev.content); if(p && p.name) names.set(ev.pubkey, String(p.name).slice(0,40)); }
+    try{
+      const p = JSON.parse(ev.content);
+      if(p && p.name && ev.created_at >= (nameAt.get(ev.pubkey) || 0)){
+        nameAt.set(ev.pubkey, ev.created_at);
+        names.set(ev.pubkey, String(p.name).slice(0,40));
+      }
+    }
     catch(e){}
     renderNames(); return;
   }
   if(ev.kind !== 42) return;
+  if(!authors.has(ev.pubkey)){
+    authors.add(ev.pubkey);
+    for(const r of sockets) refreshProfileSub(r);
+  }
   if(!seen.has(ev.id)){ seen.set(ev.id, ev); appendMsg(ev); }
   else { const el = document.querySelector(`[data-eid="${ev.id}"]`); if(el) el.querySelector(".when").textContent = ago(ev.created_at); }
 }
@@ -258,14 +315,36 @@ function broadcast(ev){
   const payload = JSON.stringify(["EVENT", ev]);
   let n = 0;
   for(const r of sockets){ if(r.ws.readyState === 1){ try{ r.ws.send(payload); n++; }catch(e){} } }
+  if(n > 0 && ev.kind === 42) pending.set(ev.id, {need:n, bad:0});
   return n;
+}
+
+/* ---------- relay acks: surface silent send failures ---------- */
+const pending = new Map();   // event id -> {need, bad}
+function onAck(id, ok, why){
+  const p = pending.get(id); if(!p) return;
+  if(ok === true){ pending.delete(id); return; }
+  p.bad++;
+  if(p.bad >= p.need){ pending.delete(id); markFailed(id, why); }
+}
+function markFailed(id, why){
+  sysLine("a message was rejected by the relays — tap it to retry");
+  const el = document.querySelector(`[data-eid="${id}"]`);
+  if(!el) return;
+  el.classList.add("failed");
+  el.onclick = () => {
+    const ev = seen.get(id); if(!ev) return;
+    el.classList.remove("failed"); el.onclick = null;
+    broadcast(ev);
+    sysLine("retrying…");
+  };
 }
 
 /* ---------- rendering ---------- */
 const msgsEl = $("msgs");
 function displayName(pubHex){
   if(pubHex === myPubHex) return myName || "you";
-  return names.get(pubHex) || (myNpub && false) || npubShort(pubHex);
+  return names.get(pubHex) || npubShort(pubHex);
 }
 function npubShort(pubHex){ try{ return npubOf(pubHex).slice(0,13)+"…"; }catch(e){ return pubHex.slice(0,10)+"…"; } }
 function renderNames(){
@@ -337,11 +416,34 @@ $("copyNpub").onclick = ()=> navigator.clipboard.writeText(myNpub).then(()=>sysL
 $("copyChan").onclick = ()=> navigator.clipboard.writeText(CHANNEL_ID).then(()=>sysLine("room ID copied — paste it in any Nostr app"));
 $("newIdent").onclick = async ()=>{
   if(!confirm("Generate a brand-new identity? Your old one can't be recovered from this app.")) return;
-  privHex = hex(S.utils.randomPrivateKey());
+  await setIdentity(hex(S.utils.randomPrivateKey()));
+  sysLine("new identity created");
+};
+async function setIdentity(newPrivHex){
+  privHex = newPrivHex;
   localStorage.setItem("gr_priv", privHex);
   myName = ""; localStorage.setItem("gr_name","");
-  await initIdentity(); await publishProfile();
-  sysLine("new identity created");
+  $("importNsec").value = ""; $("nsecline").textContent = "••••••••••••";
+  profileSent = false;
+  await initIdentity(); await publishProfile(); renderNames();
+}
+let nsecShown = false;
+$("showNsec").onclick = ()=>{
+  nsecShown = !nsecShown;
+  $("nsecline").textContent = nsecShown ? nsecOf(privHex) : "••••••••••••";
+  $("showNsec").textContent = nsecShown ? "Hide" : "Show";
+};
+$("copyNsec").onclick = ()=> navigator.clipboard.writeText(nsecOf(privHex)).then(()=>sysLine("secret key copied — keep it private"));
+$("doImport").onclick = async ()=>{
+  const v = $("importNsec").value.trim();
+  const dec = bech32Decode(v);
+  if(!dec || dec.hrp !== "nsec" || dec.data.length !== 32){ sysLine("that doesn't look like a valid nsec"); return; }
+  const hx = hex(dec.data);
+  try{ await S.schnorr.getPublicKey(unhex(hx)); }
+  catch(e){ sysLine("that doesn't look like a valid nsec"); return; }
+  if(!confirm("Replace this app's identity with the imported one?")) return;
+  await setIdentity(hx);
+  sysLine("identity imported — set your display name again if you want one");
 };
 
 /* ---------- boot ---------- */
