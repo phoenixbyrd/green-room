@@ -624,8 +624,14 @@ function appendMsg(ev){
   if(msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 220)
     msgsEl.scrollTop = msgsEl.scrollHeight;
 }
-function sysLine(t){
+function sysLine(t, ttl){
   const d = document.createElement("div"); d.className="sys"; d.textContent=t; msgsEl.appendChild(d);
+  // status lines are transient: fade out and clear after ~30s
+  setTimeout(()=>{
+    d.style.transition = "opacity .8s";
+    d.style.opacity = "0";
+    setTimeout(()=>d.remove(), 850);
+  }, ttl || 30000);
 }
 
 /* ---------- reply + user list ---------- */
