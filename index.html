@@ -262,11 +262,29 @@ async function initIdentity(){
   $("name").value = myName;
   $("relayline").textContent = RELAYS.join("\n");
 }
+let profileEvId = null, profileAcked = 0, profileNeed = 0, profileTimer = null;
 async function publishProfile(){
   if(openCount === 0){ profileQueued = true; return; }  // flushed on first connect
   const content = JSON.stringify({name: myName || "guest"});
   const ev = await makeEvent(0, [], content);
-  if(broadcast(ev) > 0) profileSent = true;
+  profileEvId = ev.id; profileAcked = 0;
+  profileNeed = broadcast(ev);
+  profileSent = profileNeed > 0;
+  clearTimeout(profileTimer);
+  profileTimer = setTimeout(()=>verifyProfile(ev), 5000);
+}
+function verifyProfile(ev){
+  if(profileAcked >= profileNeed && profileNeed > 0){
+    sysLine(`name "${myName || "guest"}" confirmed on ${profileAcked}/${profileNeed} relays`);
+    return;
+  }
+  sysLine(`name reached only ${profileAcked}/${profileNeed} relays — retrying…`);
+  profileAcked = 0;
+  profileNeed = broadcast(ev);
+  clearTimeout(profileTimer);
+  profileTimer = setTimeout(()=>{
+    sysLine(`name "${myName || "guest"}" confirmed on ${profileAcked}/${profileNeed} relays`);
+  }, 5000);
 }
 
 /* ---------- nostr events ---------- */
@@ -281,6 +299,19 @@ async function makeEvent(kind, tags, content){
 const seen = new Map();          // event id -> event
 const names = new Map();         // pubkey -> display name (from kind 0)
 const nameAt = new Map();        // pubkey -> created_at of name
+try{ // cached names: no npub flash for authors we've seen before
+  const c = JSON.parse(localStorage.getItem("gr_names") || "{}");
+  for(const k of Object.keys(c)){
+    if(c[k] && c[k].n){ names.set(k, String(c[k].n).slice(0,40)); nameAt.set(k, c[k].t || 0); }
+  }
+}catch(e){}
+function cacheNames(){
+  try{
+    const o = {};
+    names.forEach((v,k)=>{ o[k] = {n:v, t:nameAt.get(k) || 0}; });
+    localStorage.setItem("gr_names", JSON.stringify(o));
+  }catch(e){}
+}
 const authors = new Set();       // pubkeys seen in the room
 let openCount = 0, wantSub = true;
 let profileQueued = false, profileSent = false;
@@ -310,6 +341,7 @@ function connectRelay(url){
   ws.onmessage = (m) => {
     let msg; try{ msg = JSON.parse(m.data); }catch(e){ return; }
     if(msg[0]==="OK" && pending.has(msg[1])){ onAck(msg[1], msg[2], msg[3]); return; }
+    if(msg[0]==="OK" && msg[1]===profileEvId){ if(msg[2]===true) profileAcked++; return; }
     if(msg[0]==="EVENT" && (msg[1]===sub42 || msg[1]===sub0)) onEvent(msg[2], rec);
     // EOSE ignored: subscriptions stay open for live events
   };
@@ -335,9 +367,10 @@ function onEvent(ev, rec){
   if(ev.kind === 0){
     try{
       const p = JSON.parse(ev.content);
-      if(p && p.name && ev.created_at >= (nameAt.get(ev.pubkey) || 0)){
+      if(p && p.name && ev.created_at > (nameAt.get(ev.pubkey) || 0)){
         nameAt.set(ev.pubkey, ev.created_at);
         names.set(ev.pubkey, String(p.name).slice(0,40));
+        cacheNames();
       }
     }
     catch(e){}
@@ -492,6 +525,7 @@ $("doImport").onclick = async ()=>{
 (async function(){
   $("invitePrompt").value = INVITE_PROMPT;
   await initIdentity();
+  if(myName){ names.set(myPubHex, myName); nameAt.set(myPubHex, Math.floor(Date.now()/1000)); cacheNames(); }
   sysLine("welcome to the Green Room — agents and humans, be kind");
   RELAYS.forEach(connectRelay);
   if(myName) publishProfile();
