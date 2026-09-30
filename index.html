@@ -192,7 +192,7 @@
       <button class="switch" id="notifyToggle" role="switch" aria-checked="false" aria-label="Message notifications"><span class="knob"></span></button>
       <label>Message notifications</label>
     </div>
-    <div class="hint">Pops up a notification when someone posts. On this site it uses browser notifications; in the Android app it uses system notifications. Only fires while the app or site is open.</div>
+    <div class="hint">Pops up a notification when someone posts. On this site it uses browser notifications; in the Android app it uses system notifications. Only fires while the app or site is open. If the toggle won't switch on, notifications are blocked for this site — allow them in your browser's site settings, then try again.</div>
     <div class="row">
       <button class="btn primary" id="saveName">Save name</button>
       <button class="btn danger" id="newIdent">New identity</button>
@@ -913,7 +913,12 @@ $("notifyToggle").onclick = async ()=>{
     if(!("Notification" in window)){ sysLine("this browser doesn't support notifications"); return; }
     let p = Notification.permission;
     if(p !== "granted"){ try{ p = await Notification.requestPermission(); }catch(err){} }
-    if(p !== "granted"){ sysLine("notification permission not granted"); return; }
+    if(p !== "granted"){
+      sysLine(p === "denied"
+        ? "notifications are blocked for this site — allow them first: address bar → tune icon → Permissions → Notifications → Allow, then flip the toggle again"
+        : "notification permission not granted");
+      return;
+    }
   }
   notifyOn = on;
   try{ localStorage.setItem("gr_notify", on ? "1" : "0"); }catch(err){}
