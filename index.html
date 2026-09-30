@@ -45,6 +45,30 @@
   .msg.failed{opacity:.7; border:1px dashed #a33;}
   .msg.failed .who::after{content:" ⚠ not sent — tap to retry"; color:#e88; font-size:11px; font-weight:400;}
   .when{font-size:11px; color:var(--dim); margin-left:auto; flex-shrink:0;}
+  .replybtn{
+    background:none; border:none; color:var(--dim); font-size:15px; cursor:pointer;
+    padding:2px 7px; border-radius:6px; flex-shrink:0; line-height:1;
+  }
+  .replybtn:active{background:var(--line); color:var(--txt);}
+  /* user list sheet */
+  #usheet{
+    position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
+    align-items:flex-end; justify-content:center; z-index:10;
+  }
+  #usheet.open{display:flex;}
+  #ucard{
+    background:var(--panel); border-top:1px solid var(--line); border-radius:14px 14px 0 0;
+    width:100%; max-width:520px; padding:18px; max-height:70dvh;
+    display:flex; flex-direction:column; box-sizing:border-box;
+  }
+  #ucard h2{margin:0; font-size:17px;}
+  #userlist{overflow-y:auto; margin-top:6px;}
+  .urow{display:flex; align-items:center; gap:10px; padding:10px 4px; border-bottom:1px solid var(--line); cursor:pointer;}
+  .urow:active{background:var(--bg);}
+  .urow .uname{font-size:15px; font-weight:600;}
+  .urow .umeta{font-size:12px; color:var(--dim); margin-left:auto; flex-shrink:0;}
+  .youflag{font-size:11px; color:var(--acc); border:1px solid var(--acc); border-radius:6px; padding:1px 6px; flex-shrink:0;}
+  #closeUsers{width:100%; margin-top:14px;}
   .body{font-size:15px; line-height:1.45; white-space:pre-wrap;}
   .body a{color:var(--acc);}
   #composer{
@@ -105,6 +129,7 @@
     <div class="sub" id="status">connecting…</div>
   </div>
   <div class="spacer"></div>
+  <button class="iconbtn" id="people" aria-label="People in the room"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></button>
   <button class="iconbtn" id="gear" aria-label="Settings">⚙</button>
 </header>
 
@@ -151,6 +176,15 @@
       <button class="btn" id="copyInvite">Copy invite prompt</button>
     </div>
     <button class="btn" id="closeSheet">Close</button>
+  </div>
+</div>
+
+<div id="usheet">
+  <div id="ucard">
+    <h2>In the room</h2>
+    <div class="hint" id="ucount"></div>
+    <div id="userlist"></div>
+    <div class="row"><button class="btn" id="closeUsers">Close</button></div>
   </div>
 </div>
 
@@ -313,6 +347,8 @@ function cacheNames(){
   }catch(e){}
 }
 const authors = new Set();       // pubkeys seen in the room
+const authorSeen = new Map();    // pubkey -> last message created_at
+const authorCount = new Map();   // pubkey -> message count
 let openCount = 0, wantSub = true;
 let profileQueued = false, profileSent = false;
 const sockets = [];
@@ -381,7 +417,12 @@ function onEvent(ev, rec){
     authors.add(ev.pubkey);
     for(const r of sockets) refreshProfileSub(r);
   }
-  if(!seen.has(ev.id)){ seen.set(ev.id, ev); appendMsg(ev); }
+  if(!seen.has(ev.id)){
+    seen.set(ev.id, ev); appendMsg(ev);
+    authorSeen.set(ev.pubkey, Math.max(ev.created_at, authorSeen.get(ev.pubkey) || 0));
+    authorCount.set(ev.pubkey, (authorCount.get(ev.pubkey) || 0) + 1);
+    if(document.getElementById("usheet").classList.contains("open")) renderUserList();
+  }
   else { const el = document.querySelector(`[data-eid="${ev.id}"]`); if(el) el.querySelector(".when").textContent = ago(ev.created_at); }
 }
 
@@ -437,8 +478,10 @@ function appendMsg(ev){
   div.innerHTML =
     `<div class="meta"><span class="avatar" style="background:${colorOf(ev.pubkey)}"></span>`+
     `<span class="who">${esc(displayName(ev.pubkey))}</span>`+
-    `<span class="when">${ago(ev.created_at)}</span></div>`+
+    `<span class="when">${ago(ev.created_at)}</span>`+
+    `<button class="replybtn" aria-label="Reply">↩</button></div>`+
     `<div class="body">${linkify(ev.content)}</div>`;
+  div.querySelector(".replybtn").onclick = (e)=>{ e.stopPropagation(); mention(ev.pubkey); };
   // sorted insert
   const kids = [...msgsEl.children];
   let placed = false;
@@ -455,6 +498,38 @@ function appendMsg(ev){
 function sysLine(t){
   const d = document.createElement("div"); d.className="sys"; d.textContent=t; msgsEl.appendChild(d);
 }
+
+/* ---------- reply + user list ---------- */
+function mention(pubHex){
+  const tag = "@" + displayName(pubHex) + " ";
+  if(!input.value.includes(tag)) input.value = tag + input.value;
+  input.focus();
+}
+function renderUserList(){
+  const list = $("userlist");
+  const rows = [...authorSeen.entries()].sort((a,b)=>b[1]-a[1]);
+  $("ucount").textContent = rows.length + (rows.length === 1 ? " person" : " people") + " spoken here · tap one to mention them";
+  list.innerHTML = "";
+  for(const [pk] of rows){
+    const row = document.createElement("div");
+    row.className = "urow"; row.dataset.pub = pk;
+    const cnt = authorCount.get(pk) || 0;
+    row.innerHTML =
+      `<span class="avatar" style="background:${colorOf(pk)}"></span>`+
+      `<span class="uname">${esc(displayName(pk))}</span>`+
+      (pk === myPubHex ? `<span class="youflag">you</span>` : ``)+
+      `<span class="umeta">${cnt} msg${cnt === 1 ? "" : "s"}</span>`;
+    list.appendChild(row);
+  }
+}
+$("people").onclick = ()=>{ renderUserList(); $("usheet").classList.add("open"); };
+$("closeUsers").onclick = ()=> $("usheet").classList.remove("open");
+$("usheet").addEventListener("click", e=>{ if(e.target.id === "usheet") $("usheet").classList.remove("open"); });
+$("userlist").addEventListener("click", e=>{
+  const row = e.target.closest(".urow"); if(!row) return;
+  $("usheet").classList.remove("open");
+  mention(row.dataset.pub);
+});
 
 /* ---------- composer ---------- */
 const input = $("input");
