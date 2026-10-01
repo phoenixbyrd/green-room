@@ -21,7 +21,7 @@
     background:var(--panel); border-bottom:1px solid var(--line);
     padding:10px 14px; display:flex; align-items:center; gap:10px; flex-shrink:0;
   }
-  header h1{font-size:17px; margin:0; font-weight:600;}
+  header h1{font-size:17px; margin:0; font-weight:600; user-select:none; -webkit-user-select:none;}
   header .sub{font-size:11px; color:var(--dim);}
   #dot{width:9px; height:9px; border-radius:50%; background:#6e7681; flex-shrink:0;}
   #dot.on{background:var(--green); box-shadow:0 0 6px var(--green);}
@@ -290,7 +290,7 @@
 <header>
   <span id="dot"></span>
   <div>
-    <h1 id="roomName">The Green Room</h1>
+    <h1 id="roomName" title="Long-press to copy room ID">The Green Room</h1>
     <div class="sub" id="status">connecting…</div>
   </div>
   <div class="spacer"></div>
@@ -1064,7 +1064,8 @@ function connectRelay(url){
   const subD1 = "grd1" + Math.random().toString(16).slice(2,10);
   const subD2 = "grd2" + Math.random().toString(16).slice(2,10);
   const subD3 = "grd3" + Math.random().toString(16).slice(2,10);
-  const rec = {url, ws, sub42, sub0, subP, sub7, subD1, subD2, subD3};
+  const subAnn = "gra" + Math.random().toString(16).slice(2,10);
+  const rec = {url, ws, sub42, sub0, subP, sub7, subD1, subD2, subD3, subAnn};
   ws.onopen = () => {
     openCount++; setStatus();
     refreshRoomSub(rec);
@@ -1082,7 +1083,7 @@ function connectRelay(url){
     let msg; try{ msg = JSON.parse(m.data); }catch(e){ return; }
     if(msg[0]==="OK" && pending.has(msg[1])){ onAck(msg[1], msg[2], msg[3]); return; }
     if(msg[0]==="OK" && msg[1]===profileEvId){ if(msg[2]===true) profileAcked++; return; }
-    if(msg[0]==="EVENT" && (msg[1]===sub42 || msg[1]===sub0 || msg[1]===subP || msg[1]===sub7 || msg[1]===subD1 || msg[1]===subD2 || msg[1]===subD3 || joinSubs.has(msg[1]))) onEvent(msg[2], rec);
+    if(msg[0]==="EVENT" && (msg[1]===sub42 || msg[1]===subAnn || msg[1]===sub0 || msg[1]===subP || msg[1]===sub7 || msg[1]===subD1 || msg[1]===subD2 || msg[1]===subD3 || joinSubs.has(msg[1]))) onEvent(msg[2], rec);
     if(msg[0]==="EOSE" && joinSubs.has(msg[1])){
       joinSubs.delete(msg[1]);
       try{ rec.ws.send(JSON.stringify(["CLOSE", msg[1]])); }catch(e){}
@@ -1101,7 +1102,12 @@ function connectRelay(url){
 function refreshRoomSub(rec){
   if(rec.ws.readyState !== 1 || rooms.length === 0) return;
   try{ rec.ws.send(JSON.stringify(["CLOSE", rec.sub42])); }catch(e){}
-  rec.ws.send(JSON.stringify(["REQ", rec.sub42, {kinds:[42, REMOVAL_KIND, ANNOUNCE_KIND], "#e":rooms.map(r=>r.id), "limit":100}]));
+  rec.ws.send(JSON.stringify(["REQ", rec.sub42, {kinds:[42, REMOVAL_KIND], "#e":rooms.map(r=>r.id), "limit":100}]));
+  // room announcements get their own subscription: they're rare, and sharing the
+  // chat subscription's limit:100 starves them on busy relays, so other devices
+  // would never discover new rooms
+  try{ rec.ws.send(JSON.stringify(["CLOSE", rec.subAnn])); }catch(e){}
+  if(roomById[GREEN_ROOM_ID]) rec.ws.send(JSON.stringify(["REQ", rec.subAnn, {kinds:[ANNOUNCE_KIND], "#e":[GREEN_ROOM_ID], "limit":500}]));
 }
 // kind-0 profile events carry no room tag, so they need their own
 // subscription filtered by author — not the room-tagged one.
@@ -1566,8 +1572,9 @@ function appendMsg(ev){
   if(!placed) msgsEl.prepend(div);
   while(msgsEl.children.length > 300) msgsEl.firstChild.remove();
   renderReactions(ev.id);
-  // autoscroll if near bottom
-  if(msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 220)
+  // autoscroll if near bottom — or whenever you're actively typing, so the newest
+  // message stays visible above the keyboard
+  if(composerFocused() || msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 220)
     msgsEl.scrollTop = msgsEl.scrollHeight;
 }
 function sysLine(t, ttl){
@@ -2268,15 +2275,39 @@ $("dminput").addEventListener("input", e=>{
   $("dmsend").disabled = !t.value.trim();
 });
 $("dminput").addEventListener("keydown", e=>{ if(e.key === "Enter" && !e.shiftKey){ e.preventDefault(); sendDm(); } });
-input.addEventListener("focus", ()=>{ setTimeout(scrollChatToBottom, 120); setTimeout(scrollChatToBottom, 450); });
+/* ---------- keyboard: keep the newest message visible ---------- */
+function composerFocused(){
+  const a = document.activeElement;
+  return a === input || a === $("dminput");
+}
+// the keyboard animates open in steps and the layout settles late: scroll now,
+// on the next frame, and twice more after it lands
+function pinChatsToBottom(){
+  const box = $("dmmsgs");
+  const pin = ()=>{ scrollChatToBottom(); if(box) box.scrollTop = box.scrollHeight; };
+  pin();
+  requestAnimationFrame(pin);
+  setTimeout(pin, 150);
+  setTimeout(pin, 450);
+}
+input.addEventListener("focus", ()=> setTimeout(pinChatsToBottom, 60));
+$("dminput").addEventListener("focus", ()=> setTimeout(pinChatsToBottom, 60));
 if(window.visualViewport){
-  let vvH = window.visualViewport.height;
   window.visualViewport.addEventListener("resize", ()=>{
-    const h = window.visualViewport.height;
-    if(h < vvH - 120 && document.activeElement === input) setTimeout(scrollChatToBottom, 60);
-    vvH = h;
+    if(composerFocused()) pinChatsToBottom();
   });
 }
+
+/* long-press the room name in the header to copy the room ID */
+(()=>{
+  const el = $("roomName");
+  const copyId = ()=> navigator.clipboard.writeText(curRoom).then(()=>sysLine("room ID copied — paste it in any Nostr app"));
+  let t = null;
+  el.addEventListener("touchstart", ()=>{ t = setTimeout(()=>{ t = null; copyId(); }, 550); }, {passive:true});
+  el.addEventListener("touchend", ()=>{ if(t){ clearTimeout(t); t = null; } });
+  el.addEventListener("touchmove", ()=>{ if(t){ clearTimeout(t); t = null; } });
+  el.addEventListener("contextmenu", (e)=>{ e.preventDefault(); copyId(); });
+})();
 
 /* ---------- settings sheet ---------- */
 // Open a URL in the system browser from the app, or a new tab on the website.
