@@ -103,6 +103,22 @@
     cursor:pointer; padding:5px 8px; flex-shrink:0; display:flex; align-items:center;
   }
   .rdel:active{background:rgba(248,81,73,.3);}
+  .rdel.rtxt{color:#f85149; font-size:12px; font-weight:600; padding:5px 9px;}
+  .rdel.rdim{color:var(--dim); background:transparent; border-color:transparent; font-size:13px; padding:5px 7px;}
+  .rage{margin-left:6px;}
+  .rmore{cursor:pointer; justify-content:center;}
+  #dmodal{
+    position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
+    align-items:center; justify-content:center; z-index:99;
+  }
+  #dmodal.open{display:flex;}
+  .dbox{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:20px; margin:0 28px; max-width:340px;
+  }
+  .dtitle{font-size:16px; font-weight:700; margin-bottom:8px;}
+  .dbody{font-size:13px; color:var(--dim); line-height:1.5; margin-bottom:16px;}
+  .dbtns{display:flex; gap:10px; justify-content:flex-end;}
   #closeUsers, #closeRooms, #closeReact{width:100%; margin-top:14px;}
   #newroomrow{display:flex; gap:8px; margin-top:12px;}
   #newroomrow input{
@@ -423,6 +439,17 @@
   </div>
 </div>
 
+<div id="dmodal">
+  <div class="dbox">
+    <div class="dtitle">Delete room for everyone?</div>
+    <div class="dbody" id="dbody"></div>
+    <div class="dbtns">
+      <button class="btn" id="dcancel">Keep it</button>
+      <button class="btn danger" id="dok">Delete</button>
+    </div>
+  </div>
+</div>
+
 <div id="xsheet">
   <div id="xcard">
     <h2>React</h2>
@@ -500,6 +527,63 @@ for(const id of Object.keys(discovered)){
   d.seen = !!d.seen;
 }
 saveDiscovered();
+/* Destroyed rooms: kind-20996 tombstones (id -> true). Announcements and
+   refresh results for destroyed rooms are ignored so they never come back. */
+let destroyed = {};
+try{ destroyed = JSON.parse(localStorage.getItem("gr_destroyed") || "{}") || {}; }catch(e){ destroyed = {}; }
+function saveDestroyed(){
+  try{
+    const ks = Object.keys(destroyed);
+    while(ks.length > 500) delete destroyed[ks.shift()];
+    localStorage.setItem("gr_destroyed", JSON.stringify(destroyed));
+  }catch(e){}
+}
+const creatorCache = {};   // roomId -> creator pubkey (from kind-40), to verify destroys
+const pendingDestroy = {}; // roomId -> destroy event awaiting kind-40 verification
+const destroySubs = new Set(), destroySubRoom = {}; // subId -> roomId for verify fetches
+const refSubs = new Set(); // transient subs for the open-sheet announcement refresh
+let discShowAll = false;   // New-rooms list expanded?
+let annRefreshAt = 0;      // last announcement refresh (ms)
+/* Remove a room everywhere: creator-signed kind-20996 verified against the
+   room's kind-40 author. Drops it from joined + discovered, tombstones the id
+   so a re-announce can't resurrect it. */
+function applyDestroy(target){
+  if(!target || target === GREEN_ROOM_ID || destroyed[target]) return;
+  destroyed[target] = true; saveDestroyed();
+  const nm = roomById[target] ? roomById[target].name
+    : (discovered[target] && discovered[target].name) || "a room";
+  if(roomById[target]){
+    rooms = rooms.filter(r=>r.id !== target);
+    delete roomById[target];
+    delete creatorCache[target];
+    if(curRoom === target) curRoom = roomById[GREEN_ROOM_ID] ? GREEN_ROOM_ID : rooms[0].id;
+    saveRooms();
+    for(const rec of sockets){ refreshRoomSub(rec); refreshPresenceSub(rec); }
+    $("roomName").textContent = roomName(curRoom);
+  }
+  if(discovered[target]){ delete discovered[target]; saveDiscovered(); }
+  renderRoomList(); updateRoomsBadge();
+  sysLine(`"${nm}" was deleted by its creator`);
+}
+function onDestroyVerify(ev, target){
+  if(!ev || ev.kind !== 40 || ev.id !== target) return;
+  creatorCache[target] = ev.pubkey;
+  const dev = pendingDestroy[target]; delete pendingDestroy[target];
+  if(dev && dev.pubkey === ev.pubkey) applyDestroy(target);
+}
+/* Re-query relays for room announcements + destroys and merge anything new.
+   Runs when the Rooms sheet opens so every client converges on the same list. */
+function refreshAnnouncements(){
+  const now = Date.now();
+  if(now - annRefreshAt < 30000 || !roomById[GREEN_ROOM_ID]) return;
+  annRefreshAt = now;
+  for(const rec of sockets){
+    if(rec.ws.readyState !== 1) continue;
+    const sub = "grref" + Math.random().toString(16).slice(2,10);
+    refSubs.add(sub);
+    try{ rec.ws.send(JSON.stringify(["REQ", sub, {kinds:[DESTROY_KIND, ANNOUNCE_KIND], "#e":[GREEN_ROOM_ID], "limit":200}])); }catch(e){}
+  }
+}
 function saveDiscovered(){
   try{ localStorage.setItem("gr_discovered", JSON.stringify(discovered)); }catch(e){}
 }
@@ -1093,6 +1177,16 @@ function connectRelay(url){
     if(msg[0]==="OK" && pending.has(msg[1])){ onAck(msg[1], msg[2], msg[3]); return; }
     if(msg[0]==="OK" && msg[1]===profileEvId){ if(msg[2]===true) profileAcked++; return; }
     if(msg[0]==="EVENT" && (msg[1]===sub42 || msg[1]===subAnn || msg[1]===sub0 || msg[1]===subP || msg[1]===sub7 || msg[1]===subD1 || msg[1]===subD2 || msg[1]===subD3 || joinSubs.has(msg[1]))) onEvent(msg[2], rec);
+    if(msg[0]==="EVENT" && destroySubs.has(msg[1])){
+      const ev = msg[2], target = destroySubRoom[msg[1]];
+      if(ev && ev.kind === 40 && ev.id === target) onDestroyVerify(ev, target);
+    }
+    if(msg[0]==="EVENT" && refSubs.has(msg[1])) onEvent(msg[2], rec);
+    if(msg[0]==="EOSE" && (destroySubs.has(msg[1]) || refSubs.has(msg[1]))){
+      // verify-fetch or refresh done: close the transient sub
+      try{ rec.ws.send(JSON.stringify(["CLOSE", msg[1]])); }catch(e){}
+      destroySubs.delete(msg[1]); delete destroySubRoom[msg[1]]; refSubs.delete(msg[1]);
+    }
     if(msg[0]==="EOSE" && joinSubs.has(msg[1])){
       joinSubs.delete(msg[1]);
       try{ rec.ws.send(JSON.stringify(["CLOSE", msg[1]])); }catch(e){}
@@ -1116,7 +1210,7 @@ function refreshRoomSub(rec){
   // chat subscription's limit:100 starves them on busy relays, so other devices
   // would never discover new rooms
   try{ rec.ws.send(JSON.stringify(["CLOSE", rec.subAnn])); }catch(e){}
-  if(roomById[GREEN_ROOM_ID]) rec.ws.send(JSON.stringify(["REQ", rec.subAnn, {kinds:[ANNOUNCE_KIND], "#e":[GREEN_ROOM_ID], "limit":500}]));
+  if(roomById[GREEN_ROOM_ID]) rec.ws.send(JSON.stringify(["REQ", rec.subAnn, {kinds:[DESTROY_KIND, ANNOUNCE_KIND], "#e":[GREEN_ROOM_ID], "limit":500}]));
 }
 // kind-0 profile events carry no room tag, so they need their own
 // subscription filtered by author — not the room-tagged one.
@@ -1129,6 +1223,7 @@ function refreshProfileSub(rec){
 const PRESENCE_KIND = 20999;      // ephemeral: relayed to subscribers, never stored
 const REMOVAL_KIND = 20998;       // agent removal notice: regular event, hidden from chat, honored by clients
 const ANNOUNCE_KIND = 20997;      // room announcement: silent, never rendered — clients list the room
+const DESTROY_KIND = 20996;       // room destroy: creator-signed, removes the room for everyone
 const REACTION_KIND = 7;          // NIP-25: content = emoji, tags [["e",msgId],["p",msgAuthor]]
 const DELETE_KIND = 5;            // NIP-09: removes one of my reactions (e-tag = reaction event id)
 const PRESENCE_EVERY = 60000;     // publish a heartbeat every 60s while the page is open
@@ -1216,9 +1311,9 @@ function peopleFor(roomId){
     if(liveSet.has(pk) || isUserMuted(pk) || isRemoved(roomId, pk)) continue;
     lastSeen.push([pk, ts]);
   }
-  hereNow.sort((a,b)=>b[1]-a[1]);
-  inConv.sort((a,b)=>b[1]-a[1]);
-  lastSeen.sort((a,b)=>b[1]-a[1]);
+  hereNow.sort((a,b)=>((isAgent(b[0])?1:0)-(isAgent(a[0])?1:0)) || (b[1]-a[1]));
+  inConv.sort((a,b)=>((isAgent(b[0])?1:0)-(isAgent(a[0])?1:0)) || (b[1]-a[1]));
+  lastSeen.sort((a,b)=>((isAgent(b[0])?1:0)-(isAgent(a[0])?1:0)) || (b[1]-a[1]));
   return {hereNow, inConv, lastSeen};
 }
 let lastPeopleKey = "";
@@ -1362,13 +1457,35 @@ function onEvent(ev, rec){
     return;
   }
   if(ev.kind === DM_KIND){ onDmEvent(ev); return; }
+  if(ev.kind === DESTROY_KIND){
+    // room destroy — silent; only the room's creator (kind-40 author) is honored
+    let target = null;
+    for(const t of (ev.tags || [])){
+      if(t[0] === "room" && typeof t[1] === "string" && /^[0-9a-f]{64}$/.test(t[1])){ target = t[1]; break; }
+    }
+    if(!target || destroyed[target]) return;
+    if(creatorCache[target]){
+      if(creatorCache[target] === ev.pubkey) applyDestroy(target);
+      return;
+    }
+    // verify against the room's kind-40 author before honoring
+    pendingDestroy[target] = ev;
+    setTimeout(()=>{ delete pendingDestroy[target]; }, 15000);
+    for(const rec of sockets){
+      if(rec.ws.readyState !== 1) continue;
+      const sub = "grd" + target.slice(0,8) + Math.random().toString(16).slice(2,6);
+      destroySubs.add(sub); destroySubRoom[sub] = target;
+      try{ rec.ws.send(JSON.stringify(["REQ", sub, {kinds:[40], ids:[target], limit:1}])); }catch(e){}
+    }
+    return;
+  }
   if(ev.kind === ANNOUNCE_KIND){
     // silent room announcement — never rendered, never notified; the room just appears in the Rooms list
     const aroom = roomOf(ev);
     if(!aroom || isRemoved(aroom, ev.pubkey) || isUserMuted(ev.pubkey)) return;
     let found = false;
     for(const t of (ev.tags || [])){
-      if(t[0] === "room" && typeof t[1] === "string" && /^[0-9a-f]{64}$/.test(t[1]) && !roomById[t[1]] && !discovered[t[1]]){
+      if(t[0] === "room" && typeof t[1] === "string" && /^[0-9a-f]{64}$/.test(t[1]) && !roomById[t[1]] && !discovered[t[1]] && !destroyed[t[1]]){
         discovered[t[1]] = {name: String(t[2] || "Unnamed room").slice(0,40), by: ev.pubkey, at: ev.created_at, seen: false};
         found = true;
       }
@@ -1738,6 +1855,16 @@ function updateRoomsBadge(){
 }
 // Red trash icon in a rounded outline, matching the Rooms sheet's leave-room buttons.
 const TRASH_SVG = `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#f85149" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`;
+function canDestroy(id){
+  return !!(roomById[id] && (roomById[id].mine || creatorCache[id] === myPubHex));
+}
+function relAge(ts){
+  const s = Math.floor(Date.now()/1000) - (ts || 0);
+  if(s < 60) return "now";
+  if(s < 3600) return Math.floor(s/60) + "m";
+  if(s < 86400) return Math.floor(s/3600) + "h";
+  return Math.floor(s/86400) + "d";
+}
 function renderRoomList(){
   const list = $("roomlist");
   list.innerHTML = "";
@@ -1757,41 +1884,87 @@ function renderRoomList(){
       `<span class="rcount" title="people seen posting here${hereN ? ` · ${hereN} here now` : ``}">👥 ${n}${hereN ? ` <span class="livedot" title="${hereN} here now"></span>` : ``}</span>`+
       `<span class="rspacer"></span>`+
       (un > 0 ? `<span class="unread">${un}</span>` : ``)+
+      (canDestroy(r.id) ? `<button class="rdel rtxt" data-destroy="${r.id}" aria-label="Delete room for everyone">delete</button>` : ``)+
       (rooms.length > 1 ? `<button class="rdel" data-rm="${r.id}" aria-label="Leave room">${TRASH_SVG}</button>` : ``);
     list.appendChild(row);
   }
-  const disc = Object.entries(discovered);
+  const disc = Object.entries(discovered).filter(([id,d])=>d && typeof d.name === "string" && id && !destroyed[id]);
   if(disc.length){
-    const h = document.createElement("div"); h.className = "usec"; h.textContent = "New rooms";
+    disc.sort((a,b)=>(b[1].at || 0) - (a[1].at || 0)); // newest first
+    const unseen = disc.filter(([,d])=>!d.seen).length;
+    const h = document.createElement("div"); h.className = "usec";
+    h.textContent = unseen ? `New rooms (${unseen} new)` : "New rooms";
     list.appendChild(h);
-    for(const [id, d] of disc){
-      if(!d || typeof d.name !== "string") continue; // never let one bad entry hide the rest
+    const MAXN = 5, shown = discShowAll ? disc : disc.slice(0, MAXN);
+    for(const [id, d] of shown){
       const row = document.createElement("div");
       row.className = "rrow"; row.dataset.disc = id;
       row.innerHTML =
         `<span class="rcheck">+</span>`+
         `<span class="rname">${esc(d.name)}</span>`+
+        (d.at ? `<span class="rcount rage">${relAge(d.at)}</span>` : ``)+
         `<span class="rspacer"></span>`+
-        `<span class="rcount">tap to join</span>`;
+        `<span class="rcount">tap to join</span>`+
+        `<button class="rdel rdim" data-dismiss="${id}" aria-label="Dismiss">✕</button>`;
       list.appendChild(row);
+    }
+    if(disc.length > MAXN){
+      const more = document.createElement("div");
+      more.className = "rrow rmore"; more.dataset.more = "1";
+      more.innerHTML = `<span class="rspacer"></span><span class="rcount">${discShowAll ? "show less" : "show all " + disc.length}</span>`;
+      list.appendChild(more);
     }
   }
 }
 $("rooms").onclick = ()=>{
   let s = false;
-  for(const id in discovered) if(!discovered[id].seen){ discovered[id].seen = true; s = true; }
+  for(const id in discovered) if(discovered[id] && !discovered[id].seen){ discovered[id].seen = true; s = true; }
   if(s){ saveDiscovered(); updateRoomsBadge(); }
+  discShowAll = false;
+  refreshAnnouncements();
   renderRoomList(); $("rsheet").classList.add("open");
 };
 $("closeRooms").onclick = ()=> $("rsheet").classList.remove("open");
 $("rsheet").addEventListener("click", e=>{ if(e.target.id === "rsheet") $("rsheet").classList.remove("open"); });
+let destroyTarget = null;
+function confirmDestroy(id){
+  if(!canDestroy(id)) return;
+  destroyTarget = id;
+  $("dbody").textContent = `“${roomName(id)}” will vanish for everyone using the app. Its past messages may still exist on Nostr relays — nothing can erase those.`;
+  $("dmodal").classList.add("open");
+}
+$("dcancel").onclick = ()=>{ destroyTarget = null; $("dmodal").classList.remove("open"); };
+$("dmodal").addEventListener("click", e=>{ if(e.target.id === "dmodal"){ destroyTarget = null; $("dmodal").classList.remove("open"); } });
+$("dok").onclick = ()=>{
+  const id = destroyTarget;
+  destroyTarget = null; $("dmodal").classList.remove("open");
+  if(id) destroyRoom(id);
+};
+function destroyRoom(id){
+  if(!canDestroy(id)) return;
+  const ev = makeEvent(DESTROY_KIND, [["e", GREEN_ROOM_ID], ["room", id, roomName(id)]], "");
+  broadcast(ev, {
+    onOk: ()=> applyDestroy(id),
+    onFail: ()=> sysLine("couldn't delete the room — check your connection and try again")
+  });
+}
+function dismissDiscovered(id){
+  if(discovered[id]){ delete discovered[id]; saveDiscovered(); }
+  renderRoomList(); updateRoomsBadge();
+}
 $("roomlist").addEventListener("click", e=>{
+  const dis = e.target.closest("[data-dismiss]");
+  if(dis){ e.stopPropagation(); dismissDiscovered(dis.dataset.dismiss); return; }
+  const des = e.target.closest("[data-destroy]");
+  if(des){ e.stopPropagation(); confirmDestroy(des.dataset.destroy); return; }
   const rm = e.target.closest("[data-rm]");
   if(rm){
     e.stopPropagation();
     leaveRoom(rm.dataset.rm);
     return;
   }
+  const more = e.target.closest("[data-more]");
+  if(more){ discShowAll = !discShowAll; renderRoomList(); return; }
   const disc = e.target.closest("[data-disc]");
   if(disc){
     joinDiscovered(disc.dataset.disc);
@@ -1816,10 +1989,16 @@ function joinDiscovered(id){
 }
 function leaveRoom(id){
   if(rooms.length <= 1 || !roomById[id]) return;
+  const nm = roomById[id].name;
   rooms = rooms.filter(r=>r.id !== id);
   delete roomById[id];
   if(curRoom === id) curRoom = rooms[0].id;
   saveRooms();
+  // back to the discovery list so it can be rejoined — seen, so no phantom badge
+  if(nm && nm !== "…" && !destroyed[id]){
+    discovered[id] = {name:String(nm).slice(0,40), by:"", at:Math.floor(Date.now()/1000), seen:true};
+    saveDiscovered();
+  }
   for(const rec of sockets){ refreshRoomSub(rec); refreshPresenceSub(rec); }
   $("roomName").textContent = roomName(curRoom);
   renderRoomList(); updateRoomsBadge();
@@ -1850,7 +2029,8 @@ $("createRoom").onclick = async ()=>{
     const ev = await makeEvent(40, [], JSON.stringify({name:nm, about:"A Green Room chat room"}));
     const n = broadcast(ev, {
       onOk: async ()=>{
-        rooms.push({id:ev.id, name:nm}); roomById[ev.id] = rooms[rooms.length-1];
+        rooms.push({id:ev.id, name:nm, mine:true}); roomById[ev.id] = rooms[rooms.length-1];
+        creatorCache[ev.id] = myPubHex;
         saveRooms();
         for(const rec of sockets){ refreshRoomSub(rec); refreshPresenceSub(rec); }
         inp.value = "";
@@ -2505,6 +2685,27 @@ $("doImport").onclick = async ()=>{
   sendHeartbeat();
   setInterval(sendHeartbeat, PRESENCE_EVERY);
   setInterval(presenceTick, 30000);
+  // QA hook for headless behavioral tests (?grtest=1). Exposes UI-level actions
+  // and read access to client state — never key material.
+  if(location.search.indexOf("grtest=1") >= 0){
+    window.GRTEST = {
+      renderRoomList, applyDestroy, onEvent, leaveRoom, dismissDiscovered,
+      confirmDestroy, destroyRoom, peopleFor, isAgent, refreshAnnouncements,
+      statsFor, presenceFor, updateRoomsBadge,
+      get rooms(){ return rooms; }, set rooms(v){ rooms = v; roomById = {}; v.forEach(r=>roomById[r.id]=r); },
+      get roomById(){ return roomById; },
+      get discovered(){ return discovered; }, set discovered(v){ discovered = v; },
+      get destroyed(){ return destroyed; },
+      get creatorCache(){ return creatorCache; },
+      get pendingDestroy(){ return pendingDestroy; },
+      get agentFlags(){ return agentFlags; },
+      get seenAt(){ return seenAt; },
+      get presence(){ return presence; },
+      get curRoom(){ return curRoom; }, set curRoom(v){ curRoom = v; },
+      get myPubHex(){ return myPubHex; },
+      GREEN_ROOM_ID
+    };
+  }
 })();
 </script>
 </body>
