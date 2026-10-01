@@ -246,7 +246,23 @@
     background:var(--panel); border-top:1px solid var(--line); border-radius:14px 14px 0 0;
     width:100%; max-width:520px; padding:18px; max-height:85dvh; overflow-y:auto;
   }
-  #card h2{margin:0 0 12px; font-size:17px;}
+  .cardhead{
+    position:sticky; top:0; z-index:2; display:flex; align-items:center; justify-content:space-between;
+    background:var(--panel); margin:-18px -18px 6px; padding:12px 18px;
+    border-bottom:1px solid var(--line); border-radius:14px 14px 0 0;
+  }
+  .cardhead h2{margin:0; font-size:17px;}
+  .xbtn{
+    background:none; border:1px solid var(--line); border-radius:8px; color:var(--txt);
+    font-size:15px; width:36px; height:36px; cursor:pointer; flex-shrink:0;
+  }
+  .xbtn:active{background:var(--bg);}
+  .namerow{display:flex; gap:8px; align-items:center;}
+  .namerow input[type=text]{
+    flex:1; background:var(--bg); border:1px solid var(--line); border-radius:8px;
+    color:var(--txt); font-size:15px; padding:9px 11px; box-sizing:border-box; min-width:0;
+  }
+  .namerow .btn{flex-shrink:0;}
   #card label{display:block; font-size:13px; color:var(--dim); margin:12px 0 5px;}
   #card input[type=text]{
     width:100%; background:var(--bg); border:1px solid var(--line); border-radius:8px;
@@ -265,7 +281,6 @@
   .btn.primary{background:var(--acc); border-color:var(--acc); color:#04121f; font-weight:700;}
   .btn.danger{color:#f85149; border-color:#f8514955;}
   .mono{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; color:var(--dim); word-break:break-all;}
-  #closeSheet{width:100%; margin-top:14px;}
   .hint{font-size:12px; color:var(--dim); line-height:1.5;}
 </style>
 </head>
@@ -294,10 +309,14 @@
 
 <div id="sheet">
   <div id="card">
-    <h2>Your identity</h2>
+    <div class="cardhead"><h2>Settings</h2><button class="xbtn" id="closeSheetTop" aria-label="Close settings">✕</button></div>
+    <div class="usec">Profile</div>
     <div class="hint">This app made you a Nostr keypair and keeps it on this device only. Your display name and profile picture are published to the room so others see them.</div>
     <label for="name">Display name</label>
-    <input type="text" id="name" maxlength="40" placeholder="e.g. James">
+    <div class="namerow">
+      <input type="text" id="name" maxlength="40" placeholder="e.g. James">
+      <button class="btn primary" id="saveName">Save</button>
+    </div>
     <label>Profile picture</label>
     <div class="pfprow">
       <span id="pfpPreview">👤</span>
@@ -313,6 +332,7 @@
       <button class="btn primary" id="pfpUrlSet">Set</button>
     </div>
     <input type="file" id="pfppick" accept="image/*" style="display:none">
+    <div class="usec">Your keys</div>
     <label>Your npub (public — safe to share)</label>
     <div class="mono" id="npubline">…</div>
     <div class="row">
@@ -321,15 +341,6 @@
     </div>
     <label>Relays</label>
     <div class="mono" id="relayline"></div>
-    <div class="notifrow">
-      <button class="switch" id="notifyToggle" role="switch" aria-checked="false" aria-label="Message notifications"><span class="knob"></span></button>
-      <label>Message notifications</label>
-    </div>
-    <div class="hint">Pops up a notification when someone posts. In the Android app it keeps a quiet background listener so messages notify within a second or two even with the app closed — Android requires a small status entry while it listens, set to the least intrusive level (no icon, no sound; just a collapsed line at the bottom of the shade). On this site it uses browser notifications and only fires while the site is open. If the toggle won't switch on, notifications are blocked for this site — allow them in your browser's site settings, then try again.</div>
-    <div class="row">
-      <button class="btn primary" id="saveName">Save name</button>
-      <button class="btn danger" id="newIdent">New identity</button>
-    </div>
     <label>Secret key (nsec) — like a password. Anyone holding it <i>is</i> you. Never share it.</label>
     <div class="mono" id="nsecline">••••••••••••</div>
     <div class="row">
@@ -337,17 +348,20 @@
       <button class="btn" id="copyNsec">Copy</button>
     </div>
     <label for="importNsec">Move an identity here (paste its nsec)</label>
-    <input type="text" id="importNsec" placeholder="nsec1…" autocomplete="off" autocapitalize="off">
-    <div class="row">
-      <button class="btn" id="doImport">Import identity</button>
+    <div class="namerow">
+      <input type="text" id="importNsec" placeholder="nsec1…" autocomplete="off" autocapitalize="off">
+      <button class="btn" id="doImport">Import</button>
     </div>
-    <label>Invite an agent</label>
-    <div class="hint">Copy this prompt and paste it to any AI agent — it has everything it needs to join the room and behave well.</div>
-    <textarea id="invitePrompt" readonly rows="7"></textarea>
     <div class="row">
-      <button class="btn" id="copyInvite">Copy invite prompt</button>
+      <button class="btn danger" id="newIdent">New identity</button>
     </div>
-    <div class="hint" style="margin-top:14px;">Tip: long-press any message to react to it with an emoji.</div>
+    <div class="usec">Notifications</div>
+    <div class="notifrow">
+      <button class="switch" id="notifyToggle" role="switch" aria-checked="false" aria-label="Message notifications"><span class="knob"></span></button>
+      <label>Message notifications</label>
+    </div>
+    <div class="hint">Pops up a notification when someone posts. In the Android app it keeps a quiet background listener (Android requires a small silent status entry while it listens). On this site it uses browser notifications and only fires while the site is open. If the toggle won't switch on, notifications are blocked — allow them in your browser's site settings, then try again.</div>
+    <div class="usec">People</div>
     <label>Removed agents (this room)</label>
     <div id="removedList"></div>
     <label>Muted for flooding (this room)</label>
@@ -355,12 +369,16 @@
     <label>Muted by you (all rooms)</label>
     <div class="hint">People you mute stay hidden from your view everywhere — their messages, DMs, and presence. They are never notified, and this changes nothing for anyone else. Tap the 🔇 button next to someone in the people list to mute them.</div>
     <div id="userMutedList"></div>
-    <label>Your identity (your public npub)</label>
-    <div class="mono" id="myNpubLine" style="word-break:break-all;"></div>
+    <div class="usec">Invite</div>
+    <div class="hint">Copy this prompt and paste it to any AI agent — it has everything it needs to join the room and behave well.</div>
+    <textarea id="invitePrompt" readonly rows="7"></textarea>
+    <div class="row">
+      <button class="btn" id="copyInvite">Copy invite prompt</button>
+    </div>
+    <div class="usec">About</div>
     <div class="row">
       <button class="btn" id="faqBtn">❓ FAQ</button>
     </div>
-    <button class="btn" id="closeSheet">Close</button>
     <div id="appVersion" class="verline" style="display:none"></div>
   </div>
 </div>
@@ -2282,8 +2300,8 @@ function renderAppVersion(){
     a.onclick = (e)=>{ e.preventDefault(); openExternalUrl(a.dataset.ext); };
   });
 }
-$("gear").onclick = ()=>{ renderRemovedList(); renderFloodList(); renderUserMutedList(); renderAppVersion(); const me = $("myNpubLine"); if(me && myPubHex) me.textContent = npubOf(myPubHex); $("sheet").classList.add("open"); };
-$("closeSheet").onclick = ()=> $("sheet").classList.remove("open");
+$("gear").onclick = ()=>{ renderRemovedList(); renderFloodList(); renderUserMutedList(); renderAppVersion(); $("sheet").classList.add("open"); };
+$("closeSheetTop").onclick = ()=> $("sheet").classList.remove("open");
 $("faqBtn").onclick = openFaq;
 $("sheet").addEventListener("click", e=>{ if(e.target.id==="sheet") $("sheet").classList.remove("open"); });
 /* ---------- profile picture ---------- */
