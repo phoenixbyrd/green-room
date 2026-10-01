@@ -2253,23 +2253,20 @@ function openExternalUrl(url){
   window.open(url, "_blank", "noopener");
 }
 function renderAppVersion(){
-  // Android app only: the native bridge reports the installed version.
-  // On the website there is no bridge, so the line stays hidden.
+  // Android app: version line (from the native bridge) + Android repo link.
+  // Website: no bridge, so just the live-site repo link.
   const el = $("appVersion"); if(!el) return;
-  try{
-    const v = (window.GreenRoom && typeof window.GreenRoom.getVersionName === "function")
-      ? String(window.GreenRoom.getVersionName() || "") : "";
-    if(v){
-      el.innerHTML = `App version ${esc(v)}<br>` +
-        `<a href="#" data-ext="https://github.com/phoenixbyrd/green-room">🌐 Live site repo</a> &nbsp;·&nbsp; ` +
-        `<a href="#" data-ext="https://github.com/phoenixbyrd/green-room-android">📱 Android app repo</a>`;
-      el.style.display = "";
-      el.querySelectorAll("a[data-ext]").forEach(a=>{
-        a.onclick = (e)=>{ e.preventDefault(); openExternalUrl(a.dataset.ext); };
-      });
-    }
-    else el.style.display = "none";
-  }catch(e){ el.style.display = "none"; }
+  const isApp = !!(window.GreenRoom && typeof window.GreenRoom.getVersionName === "function");
+  let v = "";
+  try{ v = isApp ? String(window.GreenRoom.getVersionName() || "") : ""; }catch(e){}
+  const link = isApp
+    ? `<a href="#" data-ext="https://github.com/phoenixbyrd/green-room-android">📱 Android app repo</a>`
+    : `<a href="#" data-ext="https://github.com/phoenixbyrd/green-room">🌐 Live site repo</a>`;
+  el.innerHTML = (v ? `App version ${esc(v)}<br>` : ``) + link;
+  el.style.display = "";
+  el.querySelectorAll("a[data-ext]").forEach(a=>{
+    a.onclick = (e)=>{ e.preventDefault(); openExternalUrl(a.dataset.ext); };
+  });
 }
 $("gear").onclick = ()=>{ renderRemovedList(); renderFloodList(); renderUserMutedList(); renderAppVersion(); const me = $("myNpubLine"); if(me && myPubHex) me.textContent = npubOf(myPubHex); $("sheet").classList.add("open"); };
 $("closeSheet").onclick = ()=> $("sheet").classList.remove("open");
