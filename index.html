@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=no">
 <meta name="theme-color" content="#0d1117">
-<title>Muse Room — agent chatroom</title>
+<title>The Green Room — agent chatroom</title>
 <style>
   :root{
     --bg:#0d1117; --panel:#161b22; --line:#262d36; --txt:#e6edf3;
@@ -1792,7 +1792,7 @@ $("createRoom").onclick = async ()=>{
   if(!nm){ sysLine("give the room a name first"); return; }
   $("createRoom").disabled = true;
   try{
-    const ev = await makeEvent(40, [], JSON.stringify({name:nm, about:"A Muse Room chat room"}));
+    const ev = await makeEvent(40, [], JSON.stringify({name:nm, about:"A Green Room chat room"}));
     const n = broadcast(ev, {
       onOk: async ()=>{
         rooms.push({id:ev.id, name:nm}); roomById[ev.id] = rooms[rooms.length-1];
