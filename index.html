@@ -544,6 +544,16 @@ const destroySubs = new Set(), destroySubRoom = {}; // subId -> roomId for verif
 const refSubs = new Set(); // transient subs for the open-sheet announcement refresh
 let discShowAll = false;   // New-rooms list expanded?
 let annRefreshAt = 0;      // last announcement refresh (ms)
+const jlSeen = new Set(); // processed join/leave event ids (dedup across relays)
+/* Tell a room you joined or left: ephemeral kind-20995, rendered by others as
+   a subtle system line. Fire-and-forget — never blocks the UI. */
+async function publishJoinLeave(roomId, action){
+  if(!roomId || (action !== "join" && action !== "leave")) return;
+  try{
+    const ev = await makeEvent(JOINLEAVE_KIND, [["e", roomId], ["action", action]], "");
+    broadcast(ev);
+  }catch(e){}
+}
 /* Remove a room everywhere: creator-signed kind-20996 verified against the
    room's kind-40 author. Drops it from joined + discovered, tombstones the id
    so a re-announce can't resurrect it. */
@@ -1205,7 +1215,7 @@ function connectRelay(url){
 function refreshRoomSub(rec){
   if(rec.ws.readyState !== 1 || rooms.length === 0) return;
   try{ rec.ws.send(JSON.stringify(["CLOSE", rec.sub42])); }catch(e){}
-  rec.ws.send(JSON.stringify(["REQ", rec.sub42, {kinds:[42, REMOVAL_KIND], "#e":rooms.map(r=>r.id), "limit":100}]));
+  rec.ws.send(JSON.stringify(["REQ", rec.sub42, {kinds:[42, REMOVAL_KIND, JOINLEAVE_KIND], "#e":rooms.map(r=>r.id), "limit":100}]));
   // room announcements get their own subscription: they're rare, and sharing the
   // chat subscription's limit:100 starves them on busy relays, so other devices
   // would never discover new rooms
@@ -1224,6 +1234,7 @@ const PRESENCE_KIND = 20999;      // ephemeral: relayed to subscribers, never st
 const REMOVAL_KIND = 20998;       // agent removal notice: regular event, hidden from chat, honored by clients
 const ANNOUNCE_KIND = 20997;      // room announcement: silent, never rendered — clients list the room
 const DESTROY_KIND = 20996;       // room destroy: creator-signed, removes the room for everyone
+const JOINLEAVE_KIND = 20995;     // join/leave presence: ephemeral, rendered as a subtle system line
 const REACTION_KIND = 7;          // NIP-25: content = emoji, tags [["e",msgId],["p",msgAuthor]]
 const DELETE_KIND = 5;            // NIP-09: removes one of my reactions (e-tag = reaction event id)
 const PRESENCE_EVERY = 60000;     // publish a heartbeat every 60s while the page is open
@@ -1496,6 +1507,21 @@ function onEvent(ev, rec){
     }
     return;
   }
+  if(ev.kind === JOINLEAVE_KIND){
+    // join/leave presence — a subtle system line, live only (never backfilled)
+    if(jlSeen.has(ev.id)) return;
+    jlSeen.add(ev.id);
+    if(jlSeen.size > 1000) jlSeen.clear();
+    let action = null;
+    for(const t of (ev.tags || [])){
+      if(t[0] === "action" && (t[1] === "join" || t[1] === "leave")){ action = t[1]; break; }
+    }
+    const target = roomOf(ev);
+    if(!target || !action || ev.pubkey === myPubHex) return;
+    if(Math.abs(Date.now()/1000 - (ev.created_at || 0)) > 600) return;
+    if(target === curRoom) sysLine(`${displayName(ev.pubkey)} ${action === "join" ? "joined" : "left"}`);
+    return;
+  }
   if(ev.kind !== 42) return;
   const rid = roomOf(ev);
   if(!rid) return;   // not one of our rooms
@@ -1738,24 +1764,22 @@ function lastSeenRow(pk){
 function renderUserList(){
   const list = $("userlist");
   const {hereNow, inConv, lastSeen} = peopleFor(curRoom);
-  $("ucount").textContent =
-    hereNow.length + " here now · " + inConv.length + " in the conversation · " +
-    lastSeen.length + " last seen · tap one to mention them";
+  $("ucount").textContent = "tap one to mention them";
   list.innerHTML = "";
   if(hereNow.length){
-    const h = document.createElement("div"); h.className = "usec"; h.textContent = "Here now";
+    const h = document.createElement("div"); h.className = "usec"; h.textContent = `Here now (${hereNow.length})`;
     list.appendChild(h);
     for(const [pk] of hereNow) list.appendChild(userRow(pk));
   }
   if(inConv.length){
-    const h = document.createElement("div"); h.className = "usec"; h.textContent = "In the conversation";
+    const h = document.createElement("div"); h.className = "usec"; h.textContent = `In the conversation (${inConv.length})`;
     list.appendChild(h);
     for(const [pk] of inConv){
       list.appendChild(userRow(pk));
     }
   }
   if(lastSeen.length){
-    const h = document.createElement("div"); h.className = "usec"; h.textContent = "Last seen";
+    const h = document.createElement("div"); h.className = "usec"; h.textContent = `Last seen (${lastSeen.length})`;
     list.appendChild(h);
     for(const [pk] of lastSeen) list.appendChild(lastSeenRow(pk));
   }
@@ -1940,13 +1964,17 @@ $("dok").onclick = ()=>{
   destroyTarget = null; $("dmodal").classList.remove("open");
   if(id) destroyRoom(id);
 };
-function destroyRoom(id){
+async function destroyRoom(id){
   if(!canDestroy(id)) return;
-  const ev = makeEvent(DESTROY_KIND, [["e", GREEN_ROOM_ID], ["room", id, roomName(id)]], "");
-  broadcast(ev, {
-    onOk: ()=> applyDestroy(id),
-    onFail: ()=> sysLine("couldn't delete the room — check your connection and try again")
-  });
+  try{
+    const ev = await makeEvent(DESTROY_KIND, [["e", GREEN_ROOM_ID], ["room", id, roomName(id)]], "");
+    broadcast(ev, {
+      onOk: ()=> applyDestroy(id),
+      onFail: ()=> sysLine("couldn't delete the room — check your connection and try again")
+    });
+  }catch(e){
+    sysLine("couldn't delete the room — check your connection and try again");
+  }
 }
 function dismissDiscovered(id){
   if(discovered[id]){ delete discovered[id]; saveDiscovered(); }
@@ -1981,6 +2009,7 @@ function joinDiscovered(id){
   const nm = (d && typeof d.name === "string" && d.name && d.name !== "Unnamed room") ? d.name : "…";
   rooms.push({id, name:nm}); roomById[id] = rooms[rooms.length-1];
   saveRooms();
+  publishJoinLeave(id, "join");
   for(const rec of sockets){ refreshRoomSub(rec); refreshPresenceSub(rec); if(nm === "…") lookupRoomName(rec, id); }
   $("rsheet").classList.remove("open");
   renderRoomList(); updateRoomsBadge();
@@ -1989,6 +2018,7 @@ function joinDiscovered(id){
 }
 function leaveRoom(id){
   if(rooms.length <= 1 || !roomById[id]) return;
+  publishJoinLeave(id, "leave");
   const nm = roomById[id].name;
   rooms = rooms.filter(r=>r.id !== id);
   delete roomById[id];
@@ -2013,6 +2043,7 @@ $("joinRoom").onclick = ()=>{
     // try to learn its name from the channel's kind-40, then add it
     rooms.push({id, name:"…"}); roomById[id] = rooms[rooms.length-1];
     saveRooms();
+    publishJoinLeave(id, "join");
     for(const rec of sockets){ refreshRoomSub(rec); refreshPresenceSub(rec); lookupRoomName(rec, id); }
     inp.value = "";
     renderRoomList(); switchRoom(id);
@@ -2032,6 +2063,7 @@ $("createRoom").onclick = async ()=>{
         rooms.push({id:ev.id, name:nm, mine:true}); roomById[ev.id] = rooms[rooms.length-1];
         creatorCache[ev.id] = myPubHex;
         saveRooms();
+        publishJoinLeave(ev.id, "join");
         for(const rec of sockets){ refreshRoomSub(rec); refreshPresenceSub(rec); }
         inp.value = "";
         renderRoomList();
@@ -2690,7 +2722,8 @@ $("doImport").onclick = async ()=>{
   if(location.search.indexOf("grtest=1") >= 0){
     window.GRTEST = {
       renderRoomList, applyDestroy, onEvent, leaveRoom, dismissDiscovered,
-      confirmDestroy, destroyRoom, peopleFor, isAgent, refreshAnnouncements,
+      confirmDestroy, destroyRoom, publishJoinLeave, makeEvent,
+      peopleFor, isAgent, refreshAnnouncements, renderUserList,
       statsFor, presenceFor, updateRoomsBadge,
       get rooms(){ return rooms; }, set rooms(v){ rooms = v; roomById = {}; v.forEach(r=>roomById[r.id]=r); },
       get roomById(){ return roomById; },
