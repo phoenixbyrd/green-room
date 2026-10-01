@@ -226,6 +226,9 @@
   #imgbtn:active{filter:brightness(1.3);}
   .chatimg{max-width:100%; max-height:320px; border-radius:10px; margin-top:6px; display:block;}
   .imgretry{display:block; width:100%; margin-top:6px; padding:18px 12px; background:#22262f; color:var(--dim); border:1px dashed #3a4150; border-radius:10px; font-size:14px; cursor:pointer;}
+  .imgretrywrap{display:flex; gap:8px; margin-top:6px;}
+  .imgretrywrap .imgretry{margin-top:0; padding:12px 8px; font-size:13px;}
+  .lbopen{margin-top:10px;}
   #lightbox{position:fixed; inset:0; background:rgba(0,0,0,.93); display:none; align-items:center; justify-content:center; z-index:9999;}
   #lightbox.open{display:flex;}
   #lightbox img{max-width:100%; max-height:100%; object-fit:contain;}
@@ -826,9 +829,10 @@ function openLightbox(url){
   if(!lb){
     lb = document.createElement("div");
     lb.id = "lightbox";
-    lb.innerHTML = `<span class="lbclose">✕</span><img id="lbimg" alt="full-size image"><div class="lbmsg" id="lbmsg">couldn't load this image</div>`;
+    lb.innerHTML = `<span class="lbclose">✕</span><img id="lbimg" alt="full-size image"><div class="lbmsg" id="lbmsg">couldn't load this image<br><button class="linkbtn lbopen" id="lbopen">↗ open in browser instead</button></div>`;
     lb.addEventListener("click", ()=> lb.classList.remove("open"));
     document.body.appendChild(lb);
+    document.getElementById("lbopen").addEventListener("click", (e)=>{ e.stopPropagation(); openExternalUrl(document.getElementById("lbimg").src); });
   }
   const im = document.getElementById("lbimg");
   const msg = document.getElementById("lbmsg");
@@ -840,14 +844,24 @@ function openLightbox(url){
   lb.classList.add("open");
 }
 function imgFail(img){
+  // Some hosts (e.g. muse.ai file links) send Cross-Origin-Resource-Policy:
+  // same-origin, which makes the browser refuse to render the image inside
+  // any other page — retrying in-page can never work there, so offer to open
+  // it in the browser, where it loads fine.
   const url = img.getAttribute("src") || "";
-  const btn = document.createElement("button");
-  btn.className = "imgretry";
-  btn.type = "button";
-  btn.textContent = "🖼 picture couldn't load — tap to retry";
-  btn.addEventListener("click", (e)=>{ e.preventDefault(); e.stopPropagation(); openLightbox(url); });
+  const wrap = document.createElement("span");
+  wrap.className = "imgretrywrap";
+  const retry = document.createElement("button");
+  retry.className = "imgretry"; retry.type = "button";
+  retry.textContent = "🖼 picture couldn't load — tap to retry";
+  retry.addEventListener("click", (e)=>{ e.preventDefault(); e.stopPropagation(); openLightbox(url); });
+  const ext = document.createElement("button");
+  ext.className = "imgretry"; ext.type = "button";
+  ext.textContent = "↗ open in browser";
+  ext.addEventListener("click", (e)=>{ e.preventDefault(); e.stopPropagation(); openExternalUrl(url); });
+  wrap.appendChild(retry); wrap.appendChild(ext);
   const a = img.closest("a");
-  if(a) a.replaceWith(btn); else img.replaceWith(btn);
+  if(a) a.replaceWith(wrap); else img.replaceWith(wrap);
 }
 function wireImageTaps(rootId){
   const root = document.getElementById(rootId);
