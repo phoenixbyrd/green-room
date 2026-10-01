@@ -232,7 +232,7 @@
   #lightbox{position:fixed; inset:0; background:rgba(0,0,0,.93); display:none; align-items:center; justify-content:center; z-index:9999;}
   #lightbox.open{display:flex;}
   #lightbox img{max-width:100%; max-height:100%; object-fit:contain;}
-  #lightbox .lbclose{position:absolute; top:12px; right:16px; color:#fff; font-size:28px; line-height:1; opacity:.8;}
+  #lightbox .lbclose{position:absolute; top:12px; right:16px; z-index:2;}
   #lightbox .lbmsg{position:absolute; bottom:24px; left:0; right:0; text-align:center; color:#cfd4e0; font-size:14px; display:none;}
   .sys{align-self:center; font-size:12px; color:var(--dim); background:none; border:none; padding:4px;}
   .linkbtn{background:none; border:none; color:var(--acc); font-size:12px; padding:2px 4px; cursor:pointer; text-decoration:underline;}
@@ -244,19 +244,21 @@
   #sheet.open{display:flex;}
   #card{
     background:var(--panel); border-top:1px solid var(--line); border-radius:14px 14px 0 0;
-    width:100%; max-width:520px; padding:18px; max-height:85dvh; overflow-y:auto;
+    width:100%; max-width:520px; padding:0 18px 18px; max-height:85dvh; overflow-y:auto;
   }
   .cardhead{
     position:sticky; top:0; z-index:2; display:flex; align-items:center; justify-content:space-between;
-    background:var(--panel); margin:-18px -18px 6px; padding:12px 18px;
+    background:var(--panel); margin:0 -18px 6px; padding:12px 18px;
     border-bottom:1px solid var(--line); border-radius:14px 14px 0 0;
   }
   .cardhead h2{margin:0; font-size:17px;}
   .xbtn{
-    background:none; border:1px solid var(--line); border-radius:8px; color:var(--txt);
-    font-size:15px; width:36px; height:36px; cursor:pointer; flex-shrink:0;
+    background:rgba(248,81,73,.1); border:1px solid rgba(248,81,73,.45); border-radius:8px;
+    cursor:pointer; padding:5px 8px; flex-shrink:0; display:flex; align-items:center; justify-content:center;
+    width:36px; height:36px;
   }
-  .xbtn:active{background:var(--bg);}
+  .xbtn:active{background:rgba(248,81,73,.3);}
+  #dmhead .xbtn{width:36px; height:36px; padding:5px 8px;}
   .namerow{display:flex; gap:8px; align-items:center;}
   .namerow input[type=text]{
     flex:1; background:var(--bg); border:1px solid var(--line); border-radius:8px;
@@ -309,7 +311,7 @@
 
 <div id="sheet">
   <div id="card">
-    <div class="cardhead"><h2>Settings</h2><button class="xbtn" id="closeSheetTop" aria-label="Close settings">✕</button></div>
+    <div class="cardhead"><h2>Settings</h2><button class="xbtn" id="closeSheetTop" aria-label="Close settings"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f85149" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
     <div class="usec">Profile</div>
     <div class="hint">This app made you a Nostr keypair and keeps it on this device only. Your display name and profile picture are published to the room so others see them.</div>
     <label for="name">Display name</label>
@@ -439,7 +441,7 @@
   <div id="dmhead">
     <button id="dmback" style="display:none">‹ Back</button>
     <div id="dmtitle">Direct messages</div>
-    <button id="dmclose">✕</button>
+    <button id="dmclose" class="xbtn" aria-label="Close direct messages"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f85149" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
   </div>
   <div id="dmlist"></div>
   <div id="dmthread" style="display:none">
@@ -847,7 +849,7 @@ function openLightbox(url){
   if(!lb){
     lb = document.createElement("div");
     lb.id = "lightbox";
-    lb.innerHTML = `<span class="lbclose">✕</span><img id="lbimg" alt="full-size image"><div class="lbmsg" id="lbmsg">couldn't load this image<br><button class="linkbtn lbopen" id="lbopen">↗ open in browser instead</button></div>`;
+    lb.innerHTML = `<button class="xbtn lbclose" aria-label="Close"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f85149" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button><img id="lbimg" alt="full-size image"><div class="lbmsg" id="lbmsg">couldn't load this image<br><button class="linkbtn lbopen" id="lbopen">↗ open in browser instead</button></div>`;
     lb.addEventListener("click", ()=> lb.classList.remove("open"));
     document.body.appendChild(lb);
     document.getElementById("lbopen").addEventListener("click", (e)=>{ e.stopPropagation(); openExternalUrl(document.getElementById("lbimg").src); });
