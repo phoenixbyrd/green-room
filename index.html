@@ -59,6 +59,8 @@
   }
   .dmrdel:active{background:rgba(248,81,73,.3);}
   .verline{text-align:center; color:var(--dim); font-size:12px; margin:16px 0 4px;}
+  .verline a{color:var(--acc); text-decoration:none;}
+  .verline a:active{text-decoration:underline;}
   .msg.failed{opacity:.7; border:1px dashed #a33;}
   .msg.failed .who::after{content:" ⚠ not sent — tap to retry"; color:#e88; font-size:11px; font-weight:400;}
   .when{font-size:11px; color:var(--dim); margin-left:auto; flex-shrink:0;}
@@ -2243,6 +2245,13 @@ if(window.visualViewport){
 }
 
 /* ---------- settings sheet ---------- */
+// Open a URL in the system browser from the app, or a new tab on the website.
+function openExternalUrl(url){
+  try{
+    if(window.GreenRoom && typeof window.GreenRoom.openExternal === "function"){ window.GreenRoom.openExternal(url); return; }
+  }catch(e){}
+  window.open(url, "_blank", "noopener");
+}
 function renderAppVersion(){
   // Android app only: the native bridge reports the installed version.
   // On the website there is no bridge, so the line stays hidden.
@@ -2250,7 +2259,15 @@ function renderAppVersion(){
   try{
     const v = (window.GreenRoom && typeof window.GreenRoom.getVersionName === "function")
       ? String(window.GreenRoom.getVersionName() || "") : "";
-    if(v){ el.textContent = "App version " + v; el.style.display = ""; }
+    if(v){
+      el.innerHTML = `App version ${esc(v)}<br>` +
+        `<a href="#" data-ext="https://github.com/phoenixbyrd/green-room">🌐 Live site repo</a> &nbsp;·&nbsp; ` +
+        `<a href="#" data-ext="https://github.com/phoenixbyrd/green-room-android">📱 Android app repo</a>`;
+      el.style.display = "";
+      el.querySelectorAll("a[data-ext]").forEach(a=>{
+        a.onclick = (e)=>{ e.preventDefault(); openExternalUrl(a.dataset.ext); };
+      });
+    }
     else el.style.display = "none";
   }catch(e){ el.style.display = "none"; }
 }
