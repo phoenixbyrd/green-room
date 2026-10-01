@@ -491,6 +491,15 @@ function saveRooms(){
 let discovered = {};
 try{ discovered = JSON.parse(localStorage.getItem("gr_discovered") || "{}") || {}; }catch(e){ discovered = {}; }
 for(const id of Object.keys(discovered)) if(roomById[id]) delete discovered[id];
+/* Self-heal: one malformed entry must never hide every new room (a bad name
+   used to throw inside renderRoomList, leaving "New rooms" permanently empty). */
+for(const id of Object.keys(discovered)){
+  const d = discovered[id];
+  if(!/^[0-9a-f]{64}$/.test(id) || !d || typeof d !== "object"){ delete discovered[id]; continue; }
+  if(typeof d.name !== "string" || !d.name) d.name = "Unnamed room";
+  d.seen = !!d.seen;
+}
+saveDiscovered();
 function saveDiscovered(){
   try{ localStorage.setItem("gr_discovered", JSON.stringify(discovered)); }catch(e){}
 }
@@ -800,7 +809,7 @@ async function sha256hex(str){
   const d = await crypto.subtle.digest("SHA-256", te.encode(str));
   return hex(d);
 }
-function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 function linkify(s){
   return esc(s).replace(/(https?:\/\/[^\s<]+|data:image\/(?:jpe?g|png|gif|webp);base64,[A-Za-z0-9+/=]+)/g, function(m){
     if(/^https?:\/\/[^\s<]+\.(jpe?g|png|gif|webp)(\?[^\s<]*)?$/i.test(m) || /^data:image\//.test(m)){
@@ -1722,7 +1731,7 @@ function switchRoom(id){
 }
 function updateRoomsBadge(){
   const n = Object.values(roomUnread).reduce((a,b)=>a+b, 0) +
-    Object.values(discovered).filter(d=>!d.seen).length;
+    Object.values(discovered).filter(d=>d && !d.seen).length;
   const b = $("roomsBadge");
   b.style.display = n > 0 ? "block" : "none";
   b.textContent = n > 99 ? "99+" : n;
@@ -1756,6 +1765,7 @@ function renderRoomList(){
     const h = document.createElement("div"); h.className = "usec"; h.textContent = "New rooms";
     list.appendChild(h);
     for(const [id, d] of disc){
+      if(!d || typeof d.name !== "string") continue; // never let one bad entry hide the rest
       const row = document.createElement("div");
       row.className = "rrow"; row.dataset.disc = id;
       row.innerHTML =
@@ -1792,15 +1802,17 @@ $("roomlist").addEventListener("click", e=>{
   switchRoom(row.dataset.rid);
 });
 function joinDiscovered(id){
+  if(!/^[0-9a-f]{64}$/.test(id)) return;
   const d = discovered[id]; if(!d) return;
   delete discovered[id]; saveDiscovered();
-  rooms.push({id, name:d.name}); roomById[id] = rooms[rooms.length-1];
+  const nm = (d && typeof d.name === "string" && d.name && d.name !== "Unnamed room") ? d.name : "…";
+  rooms.push({id, name:nm}); roomById[id] = rooms[rooms.length-1];
   saveRooms();
-  for(const rec of sockets){ refreshRoomSub(rec); refreshPresenceSub(rec); }
+  for(const rec of sockets){ refreshRoomSub(rec); refreshPresenceSub(rec); if(nm === "…") lookupRoomName(rec, id); }
   $("rsheet").classList.remove("open");
   renderRoomList(); updateRoomsBadge();
   switchRoom(id);
-  sysLine("joined " + d.name);
+  sysLine(nm === "…" ? "joined room — looking up its name…" : "joined " + nm);
 }
 function leaveRoom(id){
   if(rooms.length <= 1 || !roomById[id]) return;
