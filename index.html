@@ -444,7 +444,7 @@
       <button class="btn primary" id="createRoom" style="flex:0 0 auto;">Create</button>
     </div>
     <div id="newroomrow" style="margin-top:8px;">
-      <input type="text" id="joinroomid" maxlength="64" placeholder="Join with a room ID…" autocomplete="off" autocapitalize="off">
+      <input type="text" id="joinroomid" maxlength="120" placeholder="Join with a room ID…" autocomplete="off" autocapitalize="off">
       <button class="btn" id="joinRoom" style="flex:0 0 auto;">Join</button>
     </div>
     <div class="row"><button class="btn" id="closeRooms">Close</button></div>
@@ -2191,19 +2191,32 @@ function leaveRoom(id){
 }
 $("joinRoom").onclick = ()=>{
   const inp = $("joinroomid");
-  const id = inp.value.trim().toLowerCase();
+  let raw = inp.value.trim();
+  // Nostr Search copies "name\nid" — use the name directly, no lookup needed
+  let pastedName = null;
+  const nl = raw.indexOf("\n");
+  if(nl > 0){
+    pastedName = raw.slice(0, nl).trim().slice(0,40);
+    raw = raw.slice(nl+1).trim();
+  }
+  const id = raw.toLowerCase();
   if(!/^[0-9a-f]{64}$/.test(id)){ sysLine("that doesn't look like a room ID (64 hex chars)"); return; }
   inp.value = "";
   if(roomById[id]){ switchRoom(id); }
   else {
-    // try to learn its name from the channel's kind-40, then add it
-    rooms.push({id, name:"…"}); roomById[id] = rooms[rooms.length-1];
+    // use the pasted name if we have one, else look it up from the channel's kind-40
+    const nm = pastedName || "…";
+    rooms.push({id, name:nm}); roomById[id] = rooms[rooms.length-1];
     saveRooms();
     publishJoinLeave(id, "join");
     for(const rec of sockets){ refreshRoomSub(rec); refreshPresenceSub(rec); }
-    lookupRoomNameAll(id);
     renderRoomList(); switchRoom(id);
-    sysLine("joined room — looking up its name…");
+    if(pastedName){
+      sysLine("joined room — " + pastedName);
+    } else {
+      lookupRoomNameAll(id);
+      sysLine("joined room — looking up its name…");
+    }
   }
   $("rsheet").classList.remove("open");
 };
