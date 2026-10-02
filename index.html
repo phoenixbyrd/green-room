@@ -2063,7 +2063,7 @@ function leaveRoom(id){
   const nm = roomById[id].name;
   rooms = rooms.filter(r=>r.id !== id);
   delete roomById[id];
-  if(curRoom === id) curRoom = rooms[0].id;
+  if(curRoom === id) curRoom = roomById[GREEN_ROOM_ID] ? GREEN_ROOM_ID : rooms[0].id;
   saveRooms();
   // back to the discovery list so it can be rejoined — seen, so no phantom badge
   if(nm && nm !== "…" && !destroyed[id]){
@@ -2071,8 +2071,10 @@ function leaveRoom(id){
     saveDiscovered();
   }
   for(const rec of sockets){ refreshRoomSub(rec); refreshPresenceSub(rec); }
-  $("roomName").textContent = roomName(curRoom);
+  const target = curRoom;
+  curRoom = "";
   renderRoomList(); updateRoomsBadge();
+  switchRoom(target);
   sysLine("left " + roomName(id) + " — it still exists on Nostr; rejoin anytime with its room ID");
 }
 $("joinRoom").onclick = ()=>{
