@@ -816,11 +816,11 @@ function renderRemovedList(){
     d.append(nm, mo, b); box.appendChild(d);
   }
 }
-const joinSubs = new Set();   // one-off subs waiting on a room's kind-40
+const joinSubs = new Map();   // subId -> full room ID, for one-off kind-40 name lookups
 function lookupRoomName(rec, roomId){
-  if(rec.ws.readyState !== 1) return;
   const sub = "grjoin" + roomId.slice(0,8);
-  joinSubs.add(sub);
+  joinSubs.set(sub, roomId);
+  if(rec.ws.readyState !== 1) return;
   rec.ws.send(JSON.stringify(["REQ", sub, {kinds:[40], ids:[roomId], limit:1}]));
 }
 const RELAYS = [
@@ -1204,7 +1204,7 @@ function connectRelay(url){
     refreshDmSub(rec);
     sendHeartbeat();
     // re-issue any pending room-name lookups on reconnect
-    for(const js of joinSubs) lookupRoomName(rec, js.slice(6));
+    for(const [sub, rid] of joinSubs) lookupRoomName(rec, rid);
     // flush a profile publish that was queued before any relay connected
     if(profileQueued && myName && !profileSent){ profileQueued=false; publishProfile(); }
   };
