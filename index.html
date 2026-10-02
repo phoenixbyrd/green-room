@@ -1295,13 +1295,17 @@ function connectRelay(url){
   const subAnn = "gra" + Math.random().toString(16).slice(2,10);
   const rec = {url, ws, sub42, sub0, subP, sub7, subD1, subD2, subD3, subAnn};
   ws.onopen = () => {
-    openCount++; setStatus();
-    refreshRoomSub(rec);
-    refreshPresenceSub(rec);
-    refreshProfileSub(rec);
-    refreshReactionSub(rec);
-    refreshDmSub(rec);
-    sendHeartbeat();
+    openCount++; setStatus(); resetBackoff(url);
+    const isCore = DEFAULT_RELAYS.slice(0,4).includes(url);
+    rec.isCore = isCore;
+    refreshRoomSub(rec);  // room messages + announcements (all relays)
+    if(isCore){
+      refreshPresenceSub(rec);
+      refreshProfileSub(rec);
+      refreshReactionSub(rec);
+      refreshDmSub(rec);
+      sendHeartbeat();
+    }
     // re-issue any pending room-name lookups on reconnect
     for(const [sub, rid] of joinSubs) lookupRoomName(rec, rid);
     for(const r of rooms) if(r.name === "…") scheduleNameRetry(r.id);
@@ -1464,7 +1468,7 @@ async function sendHeartbeat(){
   try{
     const ev = await makeEvent(PRESENCE_KIND, rooms.map(r=>["e", r.id]), "");
     const payload = JSON.stringify(["EVENT", ev]);
-    for(const r of sockets){ if(r.ws.readyState === 1){ try{ r.ws.send(payload); }catch(e){} } }
+    for(const r of sockets){ if(r.ws.readyState === 1 && r.isCore !== false){ try{ r.ws.send(payload); }catch(e){} } }
   }catch(e){}
 }
 function presenceTick(){
@@ -1478,7 +1482,14 @@ function presenceTick(){
   if($("rsheet").classList.contains("open")) renderRoomList();
   if($("usheet").classList.contains("open")) renderUserList();
 }
-function schedule(url){ setTimeout(()=>{ if(wantSub) connectRelay(url); }, 5000); }
+const relayBackoff = new Map(); // url -> ms
+function schedule(url){
+  const prev = relayBackoff.get(url) || 5000;
+  const next = Math.min(prev * 2, 120000); // cap at 2 min
+  relayBackoff.set(url, next);
+  setTimeout(()=>{ if(wantSub) connectRelay(url); }, prev);
+}
+function resetBackoff(url){ relayBackoff.delete(url); }
 
 function onEvent(ev, rec){
   if(!ev || !ev.id) return;
@@ -2880,7 +2891,7 @@ $("doImport").onclick = async ()=>{
     }
   }catch(e){}
   if(!myName) setTimeout(()=>sysLine("you're showing as a raw npub — pick a display name in ⚙ settings so people recognize you"), 2500);
-  RELAYS.forEach(connectRelay);
+  RELAYS.forEach((url, i)=> setTimeout(()=>{ if(wantSub) connectRelay(url); }, i * 400));
   wireImageTaps("msgs");
   wireImageTaps("dmmsgs");
   if(myName) publishProfile();
