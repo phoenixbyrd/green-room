@@ -1899,7 +1899,20 @@ function switchRoom(id){
   msgsEl.scrollTop = msgsEl.scrollHeight;  // entering a room always lands on the newest messages
   renderNames();
   for(const r of sockets) refreshReactionSub(r);
+  // The shared kind-42 subscription's limit:100 starves quiet rooms when the
+  // Green Room is busy — fetch this room's history directly so it's not empty.
+  fetchRoomHistory(id);
   sysLine("switched to " + roomName(id));
+}
+// Dedicated history fetch for one room (bypasses the shared sub's limit starvation)
+function fetchRoomHistory(id){
+  for(const rec of sockets){
+    if(rec.ws.readyState !== 1) continue;
+    try{
+      rec.ws.send(JSON.stringify(["REQ", "hist-"+id.slice(0,8)+"-"+Math.floor(Math.random()*1e6),
+        {kinds:[42], "#e":[id], limit:50}]));
+    }catch(e){}
+  }
 }
 function updateRoomsBadge(){
   const n = Object.values(roomUnread).reduce((a,b)=>a+b, 0) +
