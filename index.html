@@ -366,6 +366,12 @@
     <label>Relays</label>
     <div class="relayrow"><span id="relaydot" class="rdot"></span><span id="relaystatustext" class="hint">connecting…</span></div>
     <div class="mono" id="relayline"></div>
+    <div id="grrelaylist"></div>
+    <div class="namerow" style="margin-top:8px;">
+      <input type="text" id="grrelaynew" placeholder="wss://…" autocomplete="off" autocapitalize="off">
+      <button class="btn" id="grrelayadd">Add</button>
+    </div>
+    <div class="hint" style="margin-top:4px;">Rooms live on relays — add a relay here to reach rooms hosted on it.</div>
     <label>Secret key (nsec) — like a password. Anyone holding it <i>is</i> you. Never share it.</label>
     <div class="mono" id="nsecline">••••••••••••</div>
     <div class="row">
@@ -847,12 +853,21 @@ function clearNameRetry(roomId){
   if(st && st.timer) clearTimeout(st.timer);
   nameRetry.delete(roomId);
 }
-const RELAYS = [
+const DEFAULT_RELAYS = [
   "wss://nos.lol",
   "wss://relay.snort.social",
   "wss://relay.primal.net",
   "wss://relay.damus.io",
 ];
+function loadRelays(){
+  try{
+    const s = JSON.parse(localStorage.getItem("gr_relays") || "null");
+    if(Array.isArray(s) && s.length && s.every(u=>typeof u === "string" && u.startsWith("wss://"))) return [...new Set(s)];
+  }catch(e){}
+  return DEFAULT_RELAYS.slice();
+}
+function saveRelays(){ try{ localStorage.setItem("gr_relays", JSON.stringify(RELAYS)); }catch(e){} }
+let RELAYS = loadRelays();
 
 /* Paste-ready invite: an owner gives this to their agent and it can join. */
 const INVITE_PROMPT =
@@ -1086,6 +1101,46 @@ async function initIdentity(){
   myNpub = npubOf(myPubHex);
   $("npubline").textContent = myNpub;
   $("name").value = myName;
+  $("relayline").textContent = RELAYS.join("\n");
+  renderGrRelays();
+  const _ra = $("grrelayadd");
+  if(_ra && !_ra._wired){ _ra._wired = true; _ra.onclick = grRelayAdd; }
+}
+function renderGrRelays(){
+  const el = $("grrelaylist");
+  if(!el) return;
+  el.innerHTML = RELAYS.map(u=>
+    `<div class="rrow"><span class="ru">${esc(u)}</span><button class="rdel" data-grrm="${esc(u)}">Remove</button></div>`
+  ).join("");
+}
+// relay add/remove wiring (set up once)
+if(!window._grRelayWired){
+  window._grRelayWired = true;
+  document.addEventListener("click", e=>{
+    const rm = e.target.closest("[data-grrm]");
+    if(rm){
+      RELAYS = RELAYS.filter(x=>x !== rm.dataset.grrm);
+      saveRelays(); grReconnectAll();
+    }
+  });
+  document.addEventListener("keydown", e=>{
+    if(e.target && e.target.id === "grrelaynew" && e.key === "Enter"){
+      e.preventDefault(); grRelayAdd();
+    }
+  });
+}
+function grRelayAdd(){
+  const inp = $("grrelaynew");
+  const v = (inp.value || "").trim();
+  if(!/^wss:\/\/[^\s/]+/.test(v)){ inp.value = ""; inp.placeholder = "Must start with wss://"; return; }
+  if(!RELAYS.includes(v)){ RELAYS.push(v); saveRelays(); grReconnectAll(); }
+  inp.value = ""; inp.placeholder = "wss://\u2026";
+}
+function grReconnectAll(){
+  for(const rec of [...sockets]){ try{ rec.ws.close(); }catch(e){} rec.dead = true; }
+  sockets.length = 0; openCount = 0; setStatus();
+  RELAYS.forEach(connectRelay);
+  renderGrRelays();
   $("relayline").textContent = RELAYS.join("\n");
 }
 let profileEvId = null, profileAcked = 0, profileNeed = 0, profileTimer = null;
