@@ -111,8 +111,15 @@
   }
   .rdel{
     background:rgba(248,81,73,.1); border:1px solid rgba(248,81,73,.45); border-radius:8px;
-    cursor:pointer; padding:5px 8px; flex-shrink:0; display:flex; align-items:center;
+    cursor:pointer; padding:5px 8px; flex-shrink:0; display:flex; align-items:center; font-size:15px;
   }
+  .rconn{
+    background:none; border:1px solid var(--line); border-radius:8px; cursor:pointer;
+    padding:5px 8px; flex-shrink:0; font-size:15px; display:flex; align-items:center;
+  }
+  .rconn:active{background:var(--line);}
+  .rrow .rdot{width:12px; height:12px; margin:0 2px; flex-shrink:0;}
+  .rrow .ru{flex:1; font-size:14px; word-break:break-all;}
   .rdel:active{background:rgba(248,81,73,.3);}
   .rdel.rtxt{color:#f85149; font-size:12px; font-weight:600; padding:5px 9px;}
   .rdel.rdim{color:var(--dim); background:transparent; border-color:transparent; font-size:13px; padding:5px 7px;}
@@ -364,7 +371,7 @@
       <button class="btn" id="copyChan">Copy room ID</button>
     </div>
     <label>Relays</label>
-    <div class="relayrow"><button class="btn" id="relayreconnect" style="padding:8px 14px; font-size:13px;">Reconnect</button><span id="relaydot" class="rdot"></span><span id="relaystatustext" class="hint">connecting…</span></div>
+    <div class="relayrow"><span id="relaydot" class="rdot"></span><span id="relaystatustext" class="hint">connecting…</span></div>
     <div class="mono" id="relayline"></div>
     <div id="grrelaylist"></div>
     <div class="namerow" style="margin-top:8px;">
@@ -1115,16 +1122,17 @@ async function initIdentity(){
   renderGrRelays();
   const _ra = $("grrelayadd");
   if(_ra && !_ra._wired){ _ra._wired = true; _ra.onclick = grRelayAdd; }
-  const _rr = $("relayreconnect");
-  if(_rr && !_rr._wired){ _rr._wired = true; _rr.onclick = ()=>{ grReconnectAll(); }; }
 }
 function renderGrRelays(){
   const el = $("grrelaylist");
   if(!el) return;
   el.innerHTML = RELAYS.map(u=>{
-    const on = isRelayEnabled(u);
     const live = sockets.some(r=>r.url === u && r.ws.readyState === 1);
-    return `<div class="rrow"><button class="rtoggle ${on?"on":""}" data-grtoggle="${esc(u)}" title="${on?"Disable":"Enable"}">${on?"●":"○"}</button><span class="ru" style="${on?"":"opacity:.4;"}">${esc(u)}${live?' <span style="color:var(--acc);">· live</span>':""}</span><button class="rdel" data-grrm="${esc(u)}">Remove</button></div>`;
+    return `<div class="rrow">` +
+      (live ? `<span class="rdot on" title="Connected"></span>`
+            : `<button class="rconn" data-grconn="${esc(u)}" title="Connect">🔌</button>`) +
+      `<span class="ru">${esc(u)}</span>` +
+      `<button class="rdel" data-grrm="${esc(u)}" title="Remove">🗑️</button></div>`;
   }).join("");
 }
 // relay add/remove wiring (set up once)
@@ -1138,20 +1146,13 @@ if(!window._grRelayWired){
       saveRelays(); saveDisabledRelays(); grReconnectAll();
       return;
     }
-    const tg = e.target.closest("[data-grtoggle]");
+    const tg = e.target.closest("[data-grconn]");
     if(tg){
-      const u = tg.dataset.grtoggle;
-      if(disabledRelays.has(u)){
-        disabledRelays.delete(u);
-        saveDisabledRelays(); renderGrRelays();
-        resetBackoff(u); connectRelay(u);
-      } else {
-        disabledRelays.add(u);
-        saveDisabledRelays();
-        const rec = sockets.find(r=>r.url === u);
-        if(rec){ try{ rec.ws.close(); }catch(e){} rec.dead = true; }
-        renderGrRelays(); setStatus();
-      }
+      const u = tg.dataset.grconn;
+      // (re)enable and connect directly
+      disabledRelays.delete(u);
+      saveDisabledRelays(); renderGrRelays();
+      resetBackoff(u); connectRelay(u);
     }
   });
   document.addEventListener("keydown", e=>{
@@ -1278,9 +1279,8 @@ function setStatus(){
   if(dh){ dh.className = "rdot " + cls; }
   if(dc){ dc.textContent = t; }
   $("send").disabled = openCount === 0;
-  // reconnect button shows unless fully connected (green dot takes its place)
-  const rb = $("relayreconnect");
-  if(rb) rb.style.display = (cls === "on") ? "none" : "";
+  // refresh per-relay dots/icons if settings is open
+  if(typeof renderGrRelays === "function") renderGrRelays();
 }
 /* room-name truncation indicator: show … while there's more name to the right */
 function updateRoomEllipsis(){
