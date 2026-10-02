@@ -1940,16 +1940,13 @@ function renderRoomList(){
     const row = document.createElement("div");
     row.className = "rrow"; row.dataset.rid = r.id;
     const un = roomUnread[r.id] || 0;
-    const rmSet = new Set(removedIn(r.id));
-    const st = statsFor(r.id);
-    const n = [...st.seen.keys()].filter(k=>!rmSet.has(k)).length;
-    const nowS = Date.now()/1000;
-    const hereN = [...st.seen.entries()]
-      .filter(([k,ts])=>!rmSet.has(k) && nowS - ts <= CHAT_WINDOW/1000).length;
+    const {hereNow, inConv} = peopleFor(r.id);
+    const n = hereNow.length + inConv.length;
+    const hereN = hereNow.length;
     row.innerHTML =
       `<span class="rcheck">${r.id === curRoom ? "✓" : ""}</span>`+
       `<span class="rname">${esc(r.name)}</span>`+
-      `<span class="rcount" title="people seen posting here${hereN ? ` · ${hereN} here now` : ``}">👥 ${n}${hereN ? ` <span class="livedot" title="${hereN} here now"></span>` : ``}</span>`+
+      `<span class="rcount" title="${hereN} here now · ${inConv.length} in conversation">👥 ${n}${hereN ? ` <span class="livedot" title="${hereN} here now"></span>` : ``}</span>`+
       `<span class="rspacer"></span>`+
       (un > 0 ? `<span class="unread">${un}</span>` : ``)+
       (canDestroy(r.id) ? `<button class="rdel rtxt" data-destroy="${r.id}" aria-label="Delete room for everyone">delete</button>` : ``)+
