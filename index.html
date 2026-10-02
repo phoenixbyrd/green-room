@@ -2191,16 +2191,13 @@ function leaveRoom(id){
 }
 $("joinRoom").onclick = ()=>{
   const inp = $("joinroomid");
-  let raw = inp.value.trim();
-  // Nostr Search copies "name\nid" — use the name directly, no lookup needed
-  let pastedName = null;
-  const nl = raw.indexOf("\n");
-  if(nl > 0){
-    pastedName = raw.slice(0, nl).trim().slice(0,40);
-    raw = raw.slice(nl+1).trim();
-  }
-  const id = raw.toLowerCase();
-  if(!/^[0-9a-f]{64}$/.test(id)){ sysLine("that doesn't look like a room ID (64 hex chars)"); return; }
+  const raw = inp.value.trim();
+  // Nostr Search copies "name + id" — single-line inputs mangle the newline,
+  // so extract the 64-hex ID by regex and treat anything before it as the name
+  const m = raw.match(/[0-9a-fA-F]{64}/);
+  if(!m){ sysLine("that doesn't look like a room ID (64 hex chars)"); return; }
+  const id = m[0].toLowerCase();
+  let pastedName = raw.slice(0, m.index).trim().slice(0,40) || null;
   inp.value = "";
   if(roomById[id]){ switchRoom(id); }
   else {
