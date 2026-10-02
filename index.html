@@ -2580,6 +2580,27 @@ if(window.visualViewport){
   el.addEventListener("touchmove", ()=>{ if(t){ clearTimeout(t); t = null; } });
   el.addEventListener("contextmenu", (e)=>{ e.preventDefault(); copyId(); });
 })();
+/* long-press a room row in the Rooms sheet to copy that room's ID */
+(()=>{
+  const list = $("roomlist");
+  const copyRoomId = (id)=>{
+    const nm = roomName(id);
+    navigator.clipboard.writeText(id).then(()=>sysLine(`"${nm}" ID copied — paste it anywhere to save it`));
+  };
+  let t = null, targetId = null;
+  const rowOf = (e)=>{ const r = e.target.closest(".rrow"); return r ? r.dataset.rid : null; };
+  list.addEventListener("touchstart", (e)=>{
+    targetId = rowOf(e);
+    if(!targetId) return;
+    t = setTimeout(()=>{ t = null; copyRoomId(targetId); }, 550);
+  }, {passive:true});
+  list.addEventListener("touchend", ()=>{ if(t){ clearTimeout(t); t = null; } });
+  list.addEventListener("touchmove", ()=>{ if(t){ clearTimeout(t); t = null; } });
+  list.addEventListener("contextmenu", (e)=>{
+    const id = rowOf(e);
+    if(id){ e.preventDefault(); copyRoomId(id); }
+  });
+})();
 
 /* ---------- settings sheet ---------- */
 // Open a URL in the system browser from the app, or a new tab on the website.
