@@ -817,11 +817,35 @@ function renderRemovedList(){
   }
 }
 const joinSubs = new Map();   // subId -> full room ID, for one-off kind-40 name lookups
+const nameRetry = new Map();  // roomId -> {tries, timer}
 function lookupRoomName(rec, roomId){
   const sub = "grjoin" + roomId.slice(0,8);
   joinSubs.set(sub, roomId);
   if(rec.ws.readyState !== 1) return;
   rec.ws.send(JSON.stringify(["REQ", sub, {kinds:[40], ids:[roomId], limit:1}]));
+}
+function lookupRoomNameAll(roomId){
+  // send to every open relay; schedule retries if the name stays unresolved
+  for(const rec of sockets) lookupRoomName(rec, roomId);
+  scheduleNameRetry(roomId);
+}
+function scheduleNameRetry(roomId){
+  const st = nameRetry.get(roomId) || {tries:0, timer:null};
+  if(st.timer) clearTimeout(st.timer);
+  if(st.tries >= 8) { nameRetry.delete(roomId); return; } // ~2 min of retries
+  st.tries++;
+  st.timer = setTimeout(()=>{
+    const r = roomById[roomId];
+    if(!r || r.name !== "…"){ nameRetry.delete(roomId); return; }
+    for(const rec of sockets) lookupRoomName(rec, roomId);
+    scheduleNameRetry(roomId);
+  }, 15000);
+  nameRetry.set(roomId, st);
+}
+function clearNameRetry(roomId){
+  const st = nameRetry.get(roomId);
+  if(st && st.timer) clearTimeout(st.timer);
+  nameRetry.delete(roomId);
 }
 const RELAYS = [
   "wss://nos.lol",
@@ -1205,6 +1229,7 @@ function connectRelay(url){
     sendHeartbeat();
     // re-issue any pending room-name lookups on reconnect
     for(const [sub, rid] of joinSubs) lookupRoomName(rec, rid);
+    for(const r of rooms) if(r.name === "…") scheduleNameRetry(r.id);
     // flush a profile publish that was queued before any relay connected
     if(profileQueued && myName && !profileSent){ profileQueued=false; publishProfile(); }
   };
@@ -1388,6 +1413,7 @@ function onEvent(ev, rec){
       const m = JSON.parse(ev.content);
       if(m && m.name){
         roomById[ev.id].name = String(m.name).slice(0,40);
+        clearNameRetry(ev.id);
         saveRooms();
         if(ev.id === curRoom) $("roomName").textContent = roomById[ev.id].name;
         if($("rsheet").classList.contains("open")) renderRoomList();
@@ -2088,7 +2114,8 @@ $("joinRoom").onclick = ()=>{
     rooms.push({id, name:"…"}); roomById[id] = rooms[rooms.length-1];
     saveRooms();
     publishJoinLeave(id, "join");
-    for(const rec of sockets){ refreshRoomSub(rec); refreshPresenceSub(rec); lookupRoomName(rec, id); }
+    for(const rec of sockets){ refreshRoomSub(rec); refreshPresenceSub(rec); }
+    lookupRoomNameAll(id);
     renderRoomList(); switchRoom(id);
     sysLine("joined room — looking up its name…");
   }
