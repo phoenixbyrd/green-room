@@ -2079,6 +2079,7 @@ $("joinRoom").onclick = ()=>{
   const inp = $("joinroomid");
   const id = inp.value.trim().toLowerCase();
   if(!/^[0-9a-f]{64}$/.test(id)){ sysLine("that doesn't look like a room ID (64 hex chars)"); return; }
+  inp.value = "";
   if(roomById[id]){ switchRoom(id); }
   else {
     // try to learn its name from the channel's kind-40, then add it
@@ -2086,7 +2087,6 @@ $("joinRoom").onclick = ()=>{
     saveRooms();
     publishJoinLeave(id, "join");
     for(const rec of sockets){ refreshRoomSub(rec); refreshPresenceSub(rec); lookupRoomName(rec, id); }
-    inp.value = "";
     renderRoomList(); switchRoom(id);
     sysLine("joined room — looking up its name…");
   }
